@@ -545,14 +545,12 @@
             document.getElementById('hover-preview').style.display = 'none';
         }
 
-        function animatePreview() {
-            requestAnimationFrame(animatePreview);
+        function updatePreviewLoop() {
             if (document.getElementById('hover-preview').style.display === 'block' && pRenderer) {
                 if (pObj) pObj.rotation.y += 0.02;
                 pRenderer.render(pScene, pCamera);
             }
         }
-        requestAnimationFrame(animatePreview);
 
         // Asset DB
         let rootFolder = { folders: { "Optimized": { folders: {}, assets: [] } }, assets: [] };
@@ -814,6 +812,7 @@
         function animate() {
             requestAnimationFrame(animate);
             updatePerformance();
+            updatePreviewLoop();
             if (isPlaying) updatePlayMode();
             else if (controls) controls.update();
             if (renderer && scene && camera) renderer.render(scene, camera);
