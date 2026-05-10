@@ -731,8 +731,7 @@
                 renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
                 renderer.setPixelRatio(1);
                 renderer.setSize(container.offsetWidth, container.offsetHeight);
-                renderer.shadowMap.enabled = true;
-                renderer.shadowMap.type = THREE.BasicShadowMap;
+                renderer.shadowMap.enabled = false;
                 container.appendChild(renderer.domElement);
 
                 controls = new THREE.OrbitControls(camera, renderer.domElement);
@@ -926,10 +925,9 @@
                         n.castShadow = true;
                         n.receiveShadow = false;
                         if (n.material) {
-                            // TEST DIAGNOSTICO: Trasformo tutto in BasicMaterial (no calcoli luce)
-                            const oldTex = n.material.map;
+                            // TEST DEFINITIVO: Rimuovo anche le texture
                             n.material = new THREE.MeshBasicMaterial({ 
-                                map: oldTex,
+                                color: 0x00ff00, // Verde standard per test alberi
                                 alphaTest: 0.5,
                                 transparent: false
                             });
