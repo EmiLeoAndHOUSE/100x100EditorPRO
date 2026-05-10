@@ -418,7 +418,6 @@
 
     <input type="file" id="file-in" accept=".glb,.gltf" style="display: none;">
     <input type="file" id="texture-folder-in" webkitdirectory directory multiple style="display: none;" onchange="loadTextureFolder(event)">
-
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
@@ -438,6 +437,7 @@
         let mouse = new THREE.Vector2();
         let mainGrid = null;
         let ambientLight = null;
+        let needsRender = true;
         let lastCompModel = null;
         let lastCompName = "modello_compresso";
         let textureLibrary = {};
@@ -475,6 +475,8 @@
         let frameCount = 0;
         let fps = 0;
 
+        let domPerfFps = null, domPerfPoly = null;
+
         function updatePerformance() {
             const now = performance.now();
             frameCount++;
@@ -482,9 +484,13 @@
                 fps = frameCount;
                 frameCount = 0;
                 lastTime = now;
-                document.getElementById('perf-fps').innerText = fps;
-                document.getElementById('perf-poly').innerText = Math.floor(polyCount).toLocaleString();
-                document.getElementById('perf-calls').innerText = renderer.info.render.calls;
+                if (!domPerfFps) domPerfFps = document.getElementById('perf-fps');
+                if (!domPerfPoly) domPerfPoly = document.getElementById('perf-poly');
+                if (domPerfFps) domPerfFps.innerText = fps;
+                if (domPerfPoly) domPerfPoly.innerText = Math.floor(polyCount).toLocaleString();
+                // Aggiorna solo FPS e poligoni; evitarne i calcoli costosi di draw calls
+                // document.getElementById('perf-calls').innerText = renderer.info.render.calls;
+
             }
         }
 
@@ -717,6 +723,8 @@
         function toggleShadowsLive() {
             const show = document.getElementById('map-shadow-show').checked;
             renderer.shadowMap.enabled = show;
+            renderer.shadowMap.needsUpdate = true;
+            needsRender = true;
             scene.traverse(n => {
                 if (n.isMesh) {
                     if (n.material) n.material.needsUpdate = true;
@@ -737,19 +745,20 @@
                 renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
                 renderer.setPixelRatio(1);
                 renderer.setSize(container.offsetWidth, container.offsetHeight);
-                renderer.shadowMap.enabled = true;
+                renderer.shadowMap.enabled = false;
                 renderer.shadowMap.type = THREE.PCFShadowMap;
                 container.appendChild(renderer.domElement);
 
                 controls = new THREE.OrbitControls(camera, renderer.domElement);
-                controls.enableDamping = true;
+                controls.enableDamping = false;
+                controls.addEventListener('change', () => needsRender = true);
                 loader = new THREE.GLTFLoader();
 
                 ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
                 scene.add(ambientLight);
                 const sun = new THREE.DirectionalLight(0xffffff, 1.0);
                 sun.position.set(50, 100, 50);
-                sun.castShadow = true;
+                sun.castShadow = false;
                 sun.shadow.mapSize.set(256, 256);
                 sun.shadow.camera.left = -200;
                 sun.shadow.camera.right = 200;
@@ -770,12 +779,29 @@
                 basePlane.receiveShadow = true;
                 scene.add(basePlane);
 
+                document.addEventListener('keydown', (e) => {
+                    keys[e.code] = true;
+                    needsRender = true;
+                });
+                document.addEventListener('keyup', (e) => {
+                    keys[e.code] = false;
+                    needsRender = true;
+                });
+                // Attach pointermove to container instead of global mousemove
+                const canvasContainer = document.getElementById('canvas-container');
+                canvasContainer.addEventListener('pointermove', onMove);
+                
+                document.addEventListener('mousemove', (e) => {
+                    // Update mouse position for global raycasting if needed, but don't force render
+                    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+                    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+                });
+                
+                document.addEventListener('wheel', onWheel, { passive: false });
+                canvasContainer.addEventListener('click', onClick);
                 window.addEventListener('resize', onResize);
-                container.addEventListener('pointermove', onMove);
-                window.addEventListener('pointerdown', onClick);
-                window.addEventListener('keydown', onKeyDown);
-                window.addEventListener('keyup', onKeyUp);
-                container.addEventListener('wheel', onWheel, { passive: false });
+                
+                needsRender = true;
 
                 onResize(); // Initial rect calculation
 
@@ -787,9 +813,10 @@
             }
         };
 
+        let domCanvasContainer = null;
         function onResize() {
-            const container = document.getElementById('canvas-container');
-            containerRect = container.getBoundingClientRect();
+            if (!domCanvasContainer) domCanvasContainer = document.getElementById('canvas-container');
+            containerRect = domCanvasContainer.getBoundingClientRect();
             camera.aspect = containerRect.width / containerRect.height;
             camera.updateProjectionMatrix();
             renderer.setSize(containerRect.width, containerRect.height);
@@ -822,17 +849,21 @@
             requestAnimationFrame(animate);
             updatePerformance();
             updatePreviewLoop();
-            if (isPlaying) updatePlayMode();
-            else if (controls) controls.update();
-            if (renderer && scene && camera) renderer.render(scene, camera);
+            if (isPlaying) { updatePlayMode(); needsRender = true; }
+            
+            if (needsRender && renderer && scene && camera) {
+                renderer.render(scene, camera);
+                needsRender = false;
+            }
         }
 
         function onMove(e) {
             if (!containerRect) return;
             mouse.x = ((e.clientX - containerRect.left) / containerRect.width) * 2 - 1;
             mouse.y = -((e.clientY - containerRect.top) / containerRect.height) * 2 + 1;
-            raycaster.setFromCamera(mouse, camera);
+            
             if (isPlacing && currentPreview) {
+                raycaster.setFromCamera(mouse, camera);
                 const pt = new THREE.Vector3();
                 raycaster.ray.intersectPlane(placementPlane, pt);
                 if (pt) {
@@ -840,6 +871,7 @@
                     currentPreview.position.x = Math.round(pt.x * 2) / 2;
                     currentPreview.position.z = Math.round(pt.z * 2) / 2;
                     currentPreview.position.y = 0;
+                    needsRender = true;
                 }
             }
         }
@@ -867,6 +899,7 @@
             scene.add(final);
             objects.push(final);
             final.userData.name = currentPreview.userData.assetName + "_" + objects.length;
+            renderer.shadowMap.needsUpdate = true; // Update shadow map once
             stopPlacement();
             updateHierarchy();
             select(final);
@@ -881,6 +914,7 @@
             else currentPreview = new THREE.Mesh(new THREE.SphereGeometry(1.2, 32, 32), new THREE.MeshStandardMaterial({ color: 0x00ff88 }));
             currentPreview.userData.assetName = type;
             scene.add(currentPreview);
+            needsRender = true;
         }
 
         function stopPlacement() {
@@ -889,6 +923,7 @@
             isPlacing = false;
             if (controls) controls.enabled = true;
             document.getElementById('placement-hint').style.display = 'none';
+            needsRender = true;
         }
 
         function onKey(e) {
@@ -903,6 +938,7 @@
             if (k === 'g') currentPreview.rotation.x -= s;
             if (k === 'v') currentPreview.rotation.z += s;
             if (k === 'b') currentPreview.rotation.z -= s;
+            needsRender = true;
         }
 
         function onWheel(e) {
@@ -910,6 +946,7 @@
             e.preventDefault();
             const f = e.deltaY > 0 ? 0.92 : 1.08;
             currentPreview.scale.multiplyScalar(f);
+            needsRender = true;
         }
 
         document.getElementById('file-in').onchange = (e) => {
@@ -958,6 +995,7 @@
             scene.add(currentPreview);
             if (controls) controls.enabled = false;
             document.getElementById('placement-hint').style.display = 'block';
+            needsRender = true;
         }
 
         function renderShelf() {
@@ -1004,22 +1042,22 @@
                 <div class="control-group">
                     <label>POSITION (X, Y, Z)</label>
                     <div style="display:flex; gap:8px;">
-                        <input type="number" step="0.5" value="${obj.position.x}" oninput="selected.position.x=parseFloat(this.value)">
-                        <input type="number" step="0.5" value="${obj.position.y}" oninput="selected.position.y=parseFloat(this.value)">
-                        <input type="number" step="0.5" value="${obj.position.z}" oninput="selected.position.z=parseFloat(this.value)">
+                        <input type="number" step="0.5" value="${obj.position.x}" oninput="selected.position.x=parseFloat(this.value);needsRender=true">
+                        <input type="number" step="0.5" value="${obj.position.y}" oninput="selected.position.y=parseFloat(this.value);needsRender=true">
+                        <input type="number" step="0.5" value="${obj.position.z}" oninput="selected.position.z=parseFloat(this.value);needsRender=true">
                     </div>
                 </div>
                 <div class="control-group">
                     <label>ROTATION (X, Y, Z)°</label>
                     <div style="display:flex; gap:8px;">
-                        <input type="number" step="5" value="${Math.round(obj.rotation.x * 180/Math.PI)}" oninput="selected.rotation.x=parseFloat(this.value) * Math.PI/180">
-                        <input type="number" step="5" value="${Math.round(obj.rotation.y * 180/Math.PI)}" oninput="selected.rotation.y=parseFloat(this.value) * Math.PI/180">
-                        <input type="number" step="5" value="${Math.round(obj.rotation.z * 180/Math.PI)}" oninput="selected.rotation.z=parseFloat(this.value) * Math.PI/180">
+                        <input type="number" step="5" value="${Math.round(obj.rotation.x * 180/Math.PI)}" oninput="selected.rotation.x=parseFloat(this.value) * Math.PI/180;needsRender=true">
+                        <input type="number" step="5" value="${Math.round(obj.rotation.y * 180/Math.PI)}" oninput="selected.rotation.y=parseFloat(this.value) * Math.PI/180;needsRender=true">
+                        <input type="number" step="5" value="${Math.round(obj.rotation.z * 180/Math.PI)}" oninput="selected.rotation.z=parseFloat(this.value) * Math.PI/180;needsRender=true">
                     </div>
                 </div>
                 <div class="control-group">
                     <label>SCALE</label>
-                    <input type="number" step="0.1" value="${obj.scale.x.toFixed(2)}" oninput="const s=parseFloat(this.value); selected.scale.set(s,s,s)">
+                    <input type="number" step="0.1" value="${obj.scale.x.toFixed(2)}" oninput="const s=parseFloat(this.value); selected.scale.set(s,s,s);needsRender=true">
                 </div>
                 <button class="btn" style="width:100%;background:rgba(255,50,50,0.1);border-color:rgba(255,50,50,0.3);color:#ff5555;margin-top:24px;justify-content:center;" onclick="delSel()">
                     <i class="fas fa-trash"></i> DELETE OBJECT
@@ -1036,7 +1074,9 @@
             });
             scene.remove(selected);
             objects = objects.filter(o => o !== selected);
+            renderer.shadowMap.needsUpdate = true; // Update shadow map once
             select(null);
+            needsRender = true;
         }
 
         function updateHierarchy() {
