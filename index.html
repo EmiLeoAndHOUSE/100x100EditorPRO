@@ -320,13 +320,26 @@
                             <label style="font-size: 10px; color: var(--text-dim); display: block; margin-bottom: 6px;">LUCE AMBIENTE</label>
                             <input type="range" id="map-light" min="0" max="2" step="0.1" value="0.7" style="width: 100%; accent-color: var(--accent);" oninput="updateMapSettings()">
                         </div>
-                        <div style="display: flex; gap: 12px;">
+                        <div style="display: flex; gap: 12px; margin-bottom: 16px;">
                              <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); cursor: pointer;">
                                 <input type="checkbox" id="map-grid-show" checked onchange="updateMapSettings()"> Griglia
                             </label>
                             <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); cursor: pointer;">
                                 <input type="checkbox" id="map-shadow-show" checked onchange="updateMapSettings()"> Ombre
                             </label>
+                        </div>
+
+                        <div class="section-title" style="margin-top: 8px;">Terreno & Texture</div>
+                        <div style="margin-bottom: 12px;">
+                            <label style="display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--accent); cursor: pointer; margin-bottom: 12px;">
+                                <input type="checkbox" id="map-texture-toggle" onchange="updateGroundTexture()"> USA TEXTURE TERRENO
+                            </label>
+                            <button class="btn" style="width: 100%; margin-bottom: 12px; justify-content: center;" onclick="document.getElementById('texture-folder-in').click()">
+                                <i class="fas fa-images"></i> CARICA CARTELLA TEXTURE
+                            </button>
+                            <select id="map-texture-select" style="width: 100%; background: #000; color: #fff; border: 1px solid var(--border); padding: 8px; border-radius: 4px; font-size: 12px;" onchange="updateGroundTexture()">
+                                <option value="">Nessuna Texture</option>
+                            </select>
                         </div>
                     </div>
                 </div>
@@ -401,6 +414,7 @@
     </div>
 
     <input type="file" id="file-in" accept=".glb,.gltf" style="display: none;">
+    <input type="file" id="texture-folder-in" webkitdirectory directory multiple style="display: none;" onchange="loadTextureFolder(event)">
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -423,6 +437,8 @@
         let ambientLight = null;
         let lastCompModel = null;
         let lastCompName = "modello_compresso";
+        let textureLibrary = {};
+        let basePlane = null;
 
         // Play Mode
         let isPlaying = false;
@@ -624,6 +640,50 @@
             }
         }
 
+        function updateGroundTexture() {
+            if (!basePlane) return;
+            const useTexture = document.getElementById('map-texture-toggle').checked;
+            const textureName = document.getElementById('map-texture-select').value;
+
+            if (useTexture && textureName && textureLibrary[textureName]) {
+                const tex = textureLibrary[textureName];
+                tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+                const size = parseFloat(document.getElementById('map-size').value);
+                tex.repeat.set(size / 10, size / 10); // Ripetizione proporzionale
+                basePlane.material.map = tex;
+                basePlane.material.color.set(0xffffff); // Forza bianco per non colorare la texture
+            } else {
+                basePlane.material.map = null;
+                const bgColor = document.getElementById('map-bg').value;
+                // Usiamo un grigio scuro o il colore scelto per il terreno solido
+                basePlane.material.color.set(0x050505); 
+            }
+            basePlane.material.needsUpdate = true;
+        }
+
+        function loadTextureFolder(e) {
+            const files = e.target.files;
+            const select = document.getElementById('map-texture-select');
+            const texLoader = new THREE.TextureLoader();
+            
+            for (let file of files) {
+                if (file.type.startsWith('image/')) {
+                    const url = URL.createObjectURL(file);
+                    texLoader.load(url, (tex) => {
+                        const name = file.name;
+                        textureLibrary[name] = tex;
+                        
+                        // Aggiorna Dropdown
+                        const opt = document.createElement('option');
+                        opt.value = name;
+                        opt.textContent = name;
+                        select.appendChild(opt);
+                    });
+                }
+            }
+            alert("Cartella caricata! Seleziona una texture dal menù a tendina.");
+        }
+
         function updateMapSettings() {
             const size = parseFloat(document.getElementById('map-size').value);
             const bgColor = document.getElementById('map-bg').value;
@@ -680,11 +740,11 @@
                 mainGrid.userData.lastColor = "#00f2ff";
                 scene.add(mainGrid);
 
-                const base = new THREE.Mesh(new THREE.PlaneGeometry(2000, 2000), new THREE.MeshStandardMaterial({ color: 0x050505 }));
-                base.rotation.x = -Math.PI / 2;
-                base.position.y = -0.05;
-                base.receiveShadow = true;
-                scene.add(base);
+                basePlane = new THREE.Mesh(new THREE.PlaneGeometry(2000, 2000), new THREE.MeshStandardMaterial({ color: 0x050505 }));
+                basePlane.rotation.x = -Math.PI / 2;
+                basePlane.position.y = -0.05;
+                basePlane.receiveShadow = true;
+                scene.add(basePlane);
 
                 window.addEventListener('resize', onResize);
                 container.addEventListener('pointermove', onMove);
