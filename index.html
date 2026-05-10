@@ -646,6 +646,7 @@
             if (useTexture && textureName && textureLibrary[textureName]) {
                 const tex = textureLibrary[textureName];
                 tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+                tex.minFilter = THREE.LinearFilter; // Velocizza il campionamento
                 const size = parseFloat(document.getElementById('map-size').value);
                 tex.repeat.set(size / 10, size / 10);
                 basePlane.material.map = tex;
@@ -714,7 +715,7 @@
                 camera.lookAt(0, 0, 0);
 
                 renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
-                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.2));
+                renderer.setPixelRatio(1);
                 renderer.setSize(container.offsetWidth, container.offsetHeight);
                 renderer.shadowMap.enabled = true;
                 renderer.shadowMap.type = THREE.BasicShadowMap;
@@ -743,7 +744,7 @@
                 mainGrid.userData.lastColor = "#00f2ff";
                 scene.add(mainGrid);
 
-                basePlane = new THREE.Mesh(new THREE.PlaneGeometry(2000, 2000), new THREE.MeshStandardMaterial({ color: 0x050505 }));
+                basePlane = new THREE.Mesh(new THREE.PlaneGeometry(500, 500), new THREE.MeshPhongMaterial({ color: 0x050505 }));
                 basePlane.rotation.x = -Math.PI / 2;
                 basePlane.position.y = -0.05;
                 basePlane.receiveShadow = true;
