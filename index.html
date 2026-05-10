@@ -404,10 +404,6 @@
                             <span style="color: #fff; font-weight: 700; border-top: 1px solid var(--border); margin-top: 8px; padding-top: 8px; display: block;">SELECT TEXTURE FROM MAP MENU</span>
                         </div>
                     </div>
-                    <div id="game-crosshair" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); color: var(--accent); font-size: 24px; pointer-events: none; z-index: 10000; text-shadow: 0 0 10px var(--accent); text-align: center;">
-                        +
-                        <div style="position: absolute; top: 40px; left: 50%; transform: translateX(-50%); font-size: 10px; color: #fff; opacity: 0.5; white-space: nowrap; font-family: monospace; letter-spacing: 2px;">ESC TO EXIT PLAY MODE</div>
-                    </div>
                 </div>
 
                 <footer id="asset-shelf">
@@ -448,7 +444,6 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/modifiers/SimplifyModifier.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/utils/BufferGeometryUtils.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
-
     <script>
         let scene, camera, renderer, controls, loader;
         let objects = [];
@@ -461,8 +456,6 @@
         let mainGrid = null;
         let ambientLight = null;
         let needsRender = true;
-        let lastCompModel = null;
-        let lastCompName = "modello_compresso";
         let textureLibrary = {};
         let gridTiles = new Map(); // x,z -> mesh
         let isPainting = false;
@@ -471,498 +464,47 @@
         let polyCount = 0;
         let containerRect = null;
         
-        // Animation & Play System
         let clock = new THREE.Clock();
-        let activeMixers = new Set(); // Use a Set for faster iteration of active mixers only
+        let activeMixers = new Set();
         let playerChar = null;
         let cameraOffset = new THREE.Vector3(20, 30, 20);
 
-        // Play Mode
         let isPlaying = false;
-        let pControls = null;
-        let pVelocity = new THREE.Vector3();
-        let pOnGround = true;
+        let keys = {};
+        let rootFolder = { folders: { "Personaggi": { folders: {}, assets: [] } }, assets: [] };
+        let currentFolder = rootFolder;
 
-        function startPlayMode() {
-            if (selected && selected.userData.isChar) {
-                playerChar = selected;
-            } else {
-                playerChar = objects.find(o => o.userData.isChar);
-            }
-            
-            if (!playerChar) {
-                alert("Seleziona o aggiungi un personaggio per entrare in modalità Play!");
-                return;
-            }
-            
-            isPlaying = true;
-            if (controls) controls.enabled = false;
-            document.getElementById('layout').style.display = 'none';
-            
-            // Posiziona camera
-            camera.position.copy(playerChar.position).add(cameraOffset);
-            camera.lookAt(playerChar.position);
-        }
-
-        function stopPlayMode() {
-            isPlaying = false;
-            playerChar = null;
-            if (controls) controls.enabled = true;
-            document.getElementById('layout').style.display = 'flex';
-            needsRender = true;
-        }
-
-        // Performance
-        let lastTime = performance.now();
-        let frameCount = 0;
-        let fps = 0;
-
-        let domPerfFps = null, domPerfPoly = null;
+        // --- CORE FUNCTIONS ---
 
         function updatePerformance() {
             const now = performance.now();
-            frameCount++;
-            if (now >= lastTime + 1000) {
-                fps = frameCount;
-                frameCount = 0;
-                lastTime = now;
-                if (!domPerfFps) domPerfFps = document.getElementById('perf-fps');
-                if (!domPerfPoly) domPerfPoly = document.getElementById('perf-poly');
-                if (domPerfFps) domPerfFps.innerText = fps;
-                if (domPerfPoly) domPerfPoly.innerText = Math.floor(polyCount).toLocaleString();
-                // Aggiorna solo FPS e poligoni; evitarne i calcoli costosi di draw calls
-                // document.getElementById('perf-calls').innerText = renderer.info.render.calls;
-
+            if (!window._perfLastTime) { window._perfLastTime = now; window._perfFrames = 0; return; }
+            window._perfFrames++;
+            if (now >= window._perfLastTime + 1000) {
+                document.getElementById('perf-fps').innerText = window._perfFrames;
+                document.getElementById('perf-poly').innerText = Math.floor(polyCount).toLocaleString();
+                window._perfFrames = 0;
+                window._perfLastTime = now;
             }
         }
 
-        // Preview Engine
-        let pScene, pCamera, pRenderer, pObj = null;
-
-        function initPreview() {
-            const container = document.getElementById('hover-preview');
-            pScene = new THREE.Scene();
-            pScene.background = new THREE.Color(0x050505);
-            pCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-            pCamera.position.set(5, 5, 5);
-            pCamera.lookAt(0,0,0);
-            pRenderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
-            pRenderer.setSize(200, 200);
-            container.appendChild(pRenderer.domElement);
-            pScene.add(new THREE.AmbientLight(0xffffff, 1.2));
-            const l = new THREE.DirectionalLight(0xffffff, 1);
-            l.position.set(5,10,5);
-            pScene.add(l);
-        }
-
-        // Flag per evitare query DOM nel loop di animazione
-        let isPreviewVisible = false;
-        let previewBox = null;
-
-        function showPreview(e, asset) {
-            if (!pScene) initPreview();
-            if (!previewBox) previewBox = document.getElementById('hover-preview');
-            previewBox.style.display = 'block';
-            previewBox.style.left = (e.clientX + 24) + 'px';
-            previewBox.style.top = (e.clientY - 200) + 'px';
-            isPreviewVisible = true;
-
-            if (pObj) pScene.remove(pObj);
-            
-            if (asset === 'cube') pObj = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), new THREE.MeshStandardMaterial({color: 0x00f2ff, metalness: 0.5, roughness: 0.2}));
-            else if (asset === 'sphere') pObj = new THREE.Mesh(new THREE.SphereGeometry(1.5, 32, 32), new THREE.MeshStandardMaterial({color: 0x00ff88, metalness: 0.5, roughness: 0.2}));
-            else pObj = asset.scene.clone();
-
-            pObj.updateMatrixWorld(true);
-            const bbox = new THREE.Box3().setFromObject(pObj);
-            const center = new THREE.Vector3();
-            bbox.getCenter(center);
-            const size = new THREE.Vector3();
-            bbox.getSize(size);
-
-            pObj.position.x = -center.x;
-            pObj.position.y = -center.y;
-            pObj.position.z = -center.z;
-
-            const maxDim = Math.max(size.x, size.y, size.z);
-            const fov = pCamera.fov * (Math.PI / 180);
-            let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
-            cameraZ *= 1.8;
-            pCamera.position.set(cameraZ, cameraZ, cameraZ);
-            pCamera.lookAt(0, 0, 0);
-            
-            pScene.add(pObj);
-        }
-
-        function hidePreview() {
-            if (!previewBox) previewBox = document.getElementById('hover-preview');
-            previewBox.style.display = 'none';
-            isPreviewVisible = false;
-        }
-
-        // Nessuna query DOM - usa flag booleano (zero overhead)
-        function updatePreviewLoop() {
-            if (isPreviewVisible && pRenderer) {
-                if (pObj) pObj.rotation.y += 0.02;
-                pRenderer.render(pScene, pCamera);
-            }
-        }
-
-        // Asset DB
-        let rootFolder = { folders: { "Optimized": { folders: {}, assets: [] }, "Personaggi": { folders: {}, assets: [] } }, assets: [] };
-        let currentFolder = rootFolder;
-
-        function toggleMapMenu() {
-            const menu = document.getElementById('map-menu');
-            menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-        }
-
-        function openCompressor() { document.getElementById('comp-modal').style.display = 'flex'; }
-        function closeCompressor() { document.getElementById('comp-modal').style.display = 'none'; }
-
-        function handleCompFile(e) {
-            const file = e.target.files[0];
-            if (!file || !loader) return;
-            lastCompName = file.name.split('.')[0] + "_opt";
-            const url = URL.createObjectURL(file);
-            document.getElementById('comp-status').innerText = "Loading model...";
-            
-            loader.load(url, (gltf) => {
-                lastCompModel = gltf.scene;
-                document.getElementById('comp-settings').style.display = 'block';
-                document.getElementById('comp-status').innerText = "Model ready for optimization.";
-            });
-        }
-
-        async function processCompression() {
-            if (!lastCompModel) return;
-            const ratio = parseFloat(document.getElementById('comp-ratio').value) / 100;
-            const status = document.getElementById('comp-status');
-            status.innerHTML = "<span style='color:white'>Analyzing mesh structure...</span>";
-
-            try {
-                const modelToProcess = lastCompModel.clone();
-                const modifier = new THREE.SimplifyModifier();
-                
-                modelToProcess.traverse(child => {
-                    if (child.isMesh && child.geometry) {
-                        try {
-                            if (Array.isArray(child.material)) return;
-                            let geo = child.geometry;
-                            if (!geo.attributes.position) return;
-                            const count = geo.attributes.position.count;
-                            if (count > 2000) {
-                                if (THREE.BufferGeometryUtils) {
-                                    child.geometry = THREE.BufferGeometryUtils.mergeVertices(child.geometry);
-                                }
-                                const target = Math.floor(count * (1 - ratio));
-                                const simplified = modifier.modify(child.geometry, count - target);
-                                if (simplified) {
-                                    child.geometry = simplified;
-                                    child.geometry.computeVertexNormals();
-                                }
-                            }
-                            if (child.material) {
-                                child.material.side = THREE.DoubleSide;
-                                child.material.needsUpdate = true;
-                            }
-                        } catch (e) { console.warn("Simplification failed:", e); }
-                    }
-                });
-
-                status.innerHTML = `<span style='color:white'>Exporting optimized GLB...</span>`;
-                const exporter = new THREE.GLTFExporter();
-                exporter.parse(modelToProcess, (gltfResult) => {
-                    const blob = gltfResult instanceof ArrayBuffer ? new Blob([gltfResult], { type: 'application/octet-stream' }) 
-                                          : new Blob([JSON.stringify(gltfResult)], { type: 'application/json' });
-                    const url = URL.createObjectURL(blob);
-                    const link = document.createElement('a');
-                    link.href = url;
-                    link.download = lastCompName + ".glb";
-                    link.click();
-                    const asset = { name: lastCompName, scene: modelToProcess.clone() };
-                    rootFolder.folders["Optimized"].assets.push(asset);
-                    renderShelf();
-                    status.innerHTML = `<b style='color:var(--secondary)'>SUCCESS!</b> Model saved to 'Optimized' folder.`;
-                    setTimeout(closeCompressor, 1500);
-                }, { binary: true });
-            } catch (err) {
-                status.innerHTML = `<b style='color:red'>ERROR:</b> ${err.message}`;
-            }
-        }
-
-        function updateGroundTexture() {
-            if (!basePlane) return;
-            const useTexture = document.getElementById('map-texture-toggle').checked;
-            const textureName = document.getElementById('map-texture-select').value;
-
-            // Pulizia vecchia texture per evitare memory leak
-            if (basePlane.material.map && basePlane.material.map !== textureLibrary[textureName]) {
-                // basePlane.material.map.dispose(); // Non vogliamo distruggere la texture se è nella library
-            }
-
-            if (useTexture && textureName && textureLibrary[textureName]) {
-                const tex = textureLibrary[textureName];
-                tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-                tex.minFilter = THREE.LinearFilter; // Velocizza il campionamento
-                const size = parseFloat(document.getElementById('map-size').value);
-                tex.repeat.set(size / 10, size / 10);
-                basePlane.material.map = tex;
-                basePlane.material.color.set(0xffffff);
-            } else {
-                basePlane.material.map = null;
-                basePlane.material.color.set(0x050505); 
-            }
-            basePlane.material.needsUpdate = true;
-            needsRender = true;
-        }
-
-        function loadTextureFolder(e) {
-            const files = e.target.files;
-            const select = document.getElementById('map-texture-select');
-            const texLoader = new THREE.TextureLoader();
-            let loadedCount = 0;
-            
-            let foundAny = false;
-            for (let file of files) {
-                const name = file.name.toLowerCase();
-                const isImage = file.type.startsWith('image/') || 
-                               name.endsWith('.jpg') || 
-                               name.endsWith('.jpeg') || 
-                               name.endsWith('.png') || 
-                               name.endsWith('.webp') || 
-                               name.endsWith('.tga');
-
-                if (isImage) {
-                    foundAny = true;
-                    const url = URL.createObjectURL(file);
-                    texLoader.load(url, (tex) => {
-                        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-                        textureLibrary[file.name] = tex;
-                        
-                        // Aggiorna Dropdown se non esiste già
-                        if (!Array.from(select.options).some(opt => opt.value === file.name)) {
-                            const opt = document.createElement('option');
-                            opt.value = file.name;
-                            opt.textContent = file.name;
-                            select.appendChild(opt);
-                        }
-                        loadedCount++;
-                        console.log(`Texture caricata: ${file.name}`);
-                    }, undefined, (err) => {
-                        console.error(`Errore nel caricamento di ${file.name}:`, err);
-                    });
-                }
-            }
-            if (foundAny) {
-                alert("Processo di caricamento avviato! Le texture appariranno nel menù a tendina man mano che vengono elaborate.");
-            } else {
-                alert("Nessuna immagine valida trovata nella cartella selezionata (supportati: .jpg, .png, .webp, .tga)");
-            }
-        }
-
-        function updateMapSettings() {
-            const size = parseFloat(document.getElementById('map-size').value);
-            const bgColor = document.getElementById('map-bg').value;
-            const gridColor = document.getElementById('map-grid').value;
-            const lightIntensity = parseFloat(document.getElementById('map-light').value);
-            const showGrid = document.getElementById('map-grid-show').checked;
-            const showShadows = document.getElementById('map-shadow-show').checked;
-
-            scene.background.set(bgColor);
-            if (ambientLight) ambientLight.intensity = lightIntensity;
-            if (mainGrid) mainGrid.visible = showGrid;
-            // renderer.shadowMap.enabled = showShadows; // Gestito da toggleShadowsLive
-            
-            if (mainGrid && (mainGrid.userData.lastSize !== size || mainGrid.userData.lastColor !== gridColor)) {
-                scene.remove(mainGrid);
-                mainGrid = new THREE.GridHelper(size, size/2, gridColor, 0x444444);
-                mainGrid.userData.lastSize = size;
-                mainGrid.userData.lastColor = gridColor;
-                mainGrid.visible = showGrid;
-                scene.add(mainGrid);
-            }
-            needsRender = true;
-        }
-
-        function toggleShadowsLive() {
-            const show = document.getElementById('map-shadow-show').checked;
-            renderer.shadowMap.enabled = show;
-            renderer.shadowMap.needsUpdate = true;
-            needsRender = true;
-            scene.traverse(n => {
-                if (n.isMesh) {
-                    if (n.material) n.material.needsUpdate = true;
-                }
-            });
-        }
-
-        window.onload = () => {
-            try {
-                const container = document.getElementById('canvas-container');
-                scene = new THREE.Scene();
-                scene.background = new THREE.Color(0x0a0a0c);
-
-                camera = new THREE.PerspectiveCamera(45, container.offsetWidth / container.offsetHeight, 0.1, 2000);
-                camera.position.set(40, 40, 40);
-                camera.lookAt(0, 0, 0);
-
-                renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
-                renderer.setPixelRatio(1);
-                renderer.setSize(container.offsetWidth, container.offsetHeight);
-                renderer.shadowMap.enabled = false;
-                renderer.shadowMap.type = THREE.PCFShadowMap;
-                container.appendChild(renderer.domElement);
-
-                controls = new THREE.OrbitControls(camera, renderer.domElement);
-                controls.enableDamping = false;
-                controls.addEventListener('change', () => needsRender = true);
-                loader = new THREE.GLTFLoader();
-
-                ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
-                scene.add(ambientLight);
-                const sun = new THREE.DirectionalLight(0xffffff, 1.0);
-                sun.position.set(50, 100, 50);
-                sun.castShadow = false;
-                sun.shadow.mapSize.set(256, 256);
-                sun.shadow.camera.left = -200;
-                sun.shadow.camera.right = 200;
-                sun.shadow.camera.top = 200;
-                sun.shadow.camera.bottom = -200;
-                sun.shadow.camera.far = 500;
-                sun.shadow.bias = -0.0001;
-                scene.add(sun);
-
-                mainGrid = new THREE.GridHelper(200, 100, 0x00f2ff, 0x222222);
-                mainGrid.userData.lastSize = 200;
-                mainGrid.userData.lastColor = "#00f2ff";
-                scene.add(mainGrid);
-
-                basePlane = new THREE.Mesh(new THREE.PlaneGeometry(500, 500), new THREE.MeshPhongMaterial({ color: 0x050505 }));
-                basePlane.rotation.x = -Math.PI / 2;
-                basePlane.position.y = -0.05;
-                basePlane.receiveShadow = true;
-                scene.add(basePlane);
-
-                document.addEventListener('keydown', (e) => {
-                    keys[e.code] = true;
-                    if (e.code === 'Escape') {
-                        if (isPlaying) stopPlayMode();
-                        if (isPlacing) stopPlacement();
-                        if (isPainting) togglePaintMode();
-                    }
-                    if (e.code === 'Space' && isPlacing) {
-                        e.preventDefault();
-                        fixObject();
-                    }
-                    // Tasti per ridimensionamento alternativi allo scroll
-                    if (isPlacing && currentPreview) {
-                        if (e.code === 'Equal' || e.code === 'NumpadAdd') currentPreview.scale.multiplyScalar(1.1);
-                        if (e.code === 'Minus' || e.code === 'NumpadSubtract') currentPreview.scale.multiplyScalar(0.9);
-                    }
-                    needsRender = true;
-                });
-                document.addEventListener('keyup', (e) => {
-                    keys[e.code] = false;
-                    needsRender = true;
-                });
-                // Attach pointermove to container instead of global mousemove
-                const canvasContainer = document.getElementById('canvas-container');
-                
-                canvasContainer.addEventListener('pointerdown', (e) => {
-                    console.log("Pointerdown on canvas", e.button);
-                    // e.button 0 è click sinistro
-                    if (e.button === 0) onClick(e);
-                });
-                
-                canvasContainer.addEventListener('pointermove', onMove);
-                
-                canvasContainer.addEventListener('wheel', (e) => {
-                    if (isPlacing) {
-                        e.preventDefault();
-                        onWheel(e);
-                    }
-                }, { passive: false });
-
-                window.addEventListener('resize', onResize);
-                
-                needsRender = true;
-
-                onResize(); // Initial rect calculation
-
-                document.getElementById('loading-screen').style.display = 'none';
-                renderShelf();
-                animate();
-            } catch (err) {
-                document.getElementById('loading-status').innerHTML = "CRITICAL ERROR: " + err.message;
-            }
-        };
-
-        let domCanvasContainer = null;
         function onResize() {
-            if (!domCanvasContainer) domCanvasContainer = document.getElementById('canvas-container');
-            containerRect = domCanvasContainer.getBoundingClientRect();
+            const container = document.getElementById('canvas-container');
+            if (!container) return;
+            containerRect = container.getBoundingClientRect();
             camera.aspect = containerRect.width / containerRect.height;
             camera.updateProjectionMatrix();
             renderer.setSize(containerRect.width, containerRect.height);
-        }
-
-        let keys = {};
-        function onKeyDown(e) { keys[e.code] = true; onKey(e); }
-        function onKeyUp(e) { keys[e.code] = false; }
-
-        function updatePlayMode() {
-            if (!isPlaying || !playerChar) return;
-            
-            const speed = 0.15;
-            const moveDir = new THREE.Vector3(0, 0, 0);
-            
-            if (keys['KeyW']) moveDir.z -= 1;
-            if (keys['KeyS']) moveDir.z += 1;
-            if (keys['KeyA']) moveDir.x -= 1;
-            if (keys['KeyD']) moveDir.x += 1;
-            
-            const mixer = playerChar.userData.mixer;
-            const anims = playerChar.userData.animations;
-
-            if (moveDir.lengthSq() > 0) {
-                moveDir.normalize();
-                
-                // Muovi personaggio
-                playerChar.position.addScaledVector(moveDir, speed);
-                
-                // Ruota personaggio verso la direzione
-                const targetAngle = Math.atan2(moveDir.x, moveDir.z);
-                playerChar.rotation.y = targetAngle;
-                
-                // Animazione Walk
-                if (anims && anims.walk && !anims.walk.isRunning()) {
-                    if (anims.idle) anims.idle.fadeOut(0.2);
-                    anims.walk.reset().fadeIn(0.2).play();
-                }
-            } else {
-                // Animazione Idle
-                if (anims && anims.idle && !anims.idle.isRunning()) {
-                    if (anims.walk) anims.walk.fadeOut(0.2);
-                    anims.idle.reset().fadeIn(0.2).play();
-                }
-            }
-            
-            // La telecamera segue il player
-            const targetCamPos = playerChar.position.clone().add(cameraOffset);
-            camera.position.lerp(targetCamPos, 0.1);
-            camera.lookAt(playerChar.position);
-            
             needsRender = true;
         }
 
         function animate() {
             requestAnimationFrame(animate);
-            
             const delta = clock.getDelta();
+            
             if (activeMixers.size > 0) {
-                activeMixers.forEach(mixer => mixer.update(delta));
-                needsRender = true; // Forza render se ci sono animazioni attive
+                activeMixers.forEach(m => m.update(delta));
+                needsRender = true;
             }
 
             if (isPlaying) { updatePlayMode(); needsRender = true; }
@@ -972,55 +514,55 @@
                 renderer.render(scene, camera);
                 if (!isPlaying && !isPlacing && activeMixers.size === 0) needsRender = false;
                 updatePerformance();
+                updatePreviewLoop();
             }
         }
 
+        // --- INPUT HANDLING ---
+
         function onMove(e) {
-            if (!containerRect) return;
+            if (!containerRect) onResize();
             mouse.x = ((e.clientX - containerRect.left) / containerRect.width) * 2 - 1;
             mouse.y = -((e.clientY - containerRect.top) / containerRect.height) * 2 + 1;
             
             raycaster.setFromCamera(mouse, camera);
             const pt = new THREE.Vector3();
-            raycaster.ray.intersectPlane(placementPlane, pt);
-
-            if (isPainting && brushCursor) {
-                if (pt) {
-                    const cellSize = getCellSize();
-                    brushCursor.position.x = Math.floor(pt.x / cellSize) * cellSize + cellSize / 2;
-                    brushCursor.position.z = Math.floor(pt.z / cellSize) * cellSize + cellSize / 2;
-                    brushCursor.position.y = 0.05; // Alzato per visibilità
-                    brushCursor.visible = true;
-                } else {
-                    brushCursor.visible = false;
-                }
-                needsRender = true;
-            }
-
-            if (isPlacing && currentPreview) {
-                if (pt) {
+            if (raycaster.ray.intersectPlane(placementPlane, pt)) {
+                if (isPlacing && currentPreview) {
+                    currentPreview.position.copy(pt);
                     if (currentPreview.userData.isChar) {
-                        const cellSize = getCellSize();
-                        currentPreview.position.x = Math.floor(pt.x / cellSize) * cellSize + cellSize / 2;
-                        currentPreview.position.z = Math.floor(pt.z / cellSize) * cellSize + cellSize / 2;
+                        currentPreview.position.x = Math.floor(pt.x / 2) * 2 + 1;
+                        currentPreview.position.z = Math.floor(pt.z / 2) * 2 + 1;
                     } else {
                         currentPreview.position.x = Math.round(pt.x * 2) / 2;
                         currentPreview.position.z = Math.round(pt.z * 2) / 2;
                     }
                     currentPreview.position.y = 0;
+                    needsRender = true;
                 }
-                needsRender = true;
+                if (isPainting && brushCursor) {
+                    brushCursor.position.x = Math.floor(pt.x / 2) * 2 + 1;
+                    brushCursor.position.z = Math.floor(pt.z / 2) * 2 + 1;
+                    brushCursor.position.y = 0.05;
+                    brushCursor.visible = true;
+                    needsRender = true;
+                }
             }
         }
 
         function onClick(e) {
             if (isPlaying) return;
-            if (isPainting) {
-                paintTile(e.shiftKey);
-                return;
-            }
-            if (isPlacing && currentPreview) {
-                fixObject();
+            if (isPainting) { paintTile(e.shiftKey); return; }
+            if (isPlacing && currentPreview) { fixObject(); return; }
+            
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(objects, true);
+            if (intersects.length > 0) {
+                let obj = intersects[0].object;
+                while (obj.parent && !objects.includes(obj)) obj = obj.parent;
+                if (objects.includes(obj)) select(obj);
+            } else {
+                select(null);
             }
         }
 
@@ -1031,159 +573,74 @@
             needsRender = true;
         }
 
-        function togglePaintMode() {
-            isPainting = !isPainting;
+        // --- PLACEMENT ---
+
+        function spawnGLB(name, sceneObj, isChar = false) {
             stopPlacement();
+            if (isPainting) togglePaintMode();
+            isPlacing = true;
+            currentPreview = sceneObj.clone();
+            currentPreview.userData = { ...sceneObj.userData, assetName: name, isChar: isChar };
             
-            const btn = document.getElementById('btn-paint');
-            const hint = document.getElementById('paint-hint');
-            if (isPainting) {
-                btn.style.background = 'var(--accent-glow)';
-                btn.style.borderColor = 'var(--accent)';
-                hint.style.display = 'block';
-                if (!brushCursor) {
-                    const cellSize = getCellSize();
-                    brushCursor = new THREE.Mesh(
-                        new THREE.PlaneGeometry(cellSize, cellSize),
-                        new THREE.MeshBasicMaterial({ color: 0x00f2ff, transparent: true, opacity: 0.3, side: THREE.DoubleSide })
-                    );
-                    brushCursor.rotation.x = -Math.PI / 2;
-                    scene.add(brushCursor);
-                }
-                brushCursor.visible = true;
-            } else {
-                btn.style.background = '';
-                btn.style.borderColor = '';
-                hint.style.display = 'none';
-                if (brushCursor) brushCursor.visible = false;
+            if (isChar && sceneObj.userData.originalAnimations) {
+                const mixer = new THREE.AnimationMixer(currentPreview);
+                const anims = {};
+                sceneObj.userData.originalAnimations.forEach(clip => {
+                    const n = clip.name.toLowerCase();
+                    const action = mixer.clipAction(clip);
+                    if (n.includes('idle')) anims.idle = action;
+                    if (n.includes('walk') || n.includes('run')) anims.walk = action;
+                });
+                if (!anims.idle) anims.idle = mixer.clipAction(sceneObj.userData.originalAnimations[0]);
+                currentPreview.userData.mixer = mixer;
+                currentPreview.userData.animations = anims;
+                if (anims.idle) anims.idle.play();
+                activeMixers.add(mixer);
             }
-            needsRender = true;
-        }
 
-        function getCellSize() {
-            const size = parseFloat(document.getElementById('map-size').value);
-            return size / (size / 2); // Attualmente divisioni = size/2, quindi cellSize = 2
-        }
-
-        function paintTile(erase = false) {
-            if (!brushCursor || !brushCursor.visible) return;
-            
-            const x = brushCursor.position.x;
-            const z = brushCursor.position.z;
-            const key = `${x},${z}`;
-            
-            // Rimuovi tile esistente in quella posizione
-            if (gridTiles.has(key)) {
-                scene.remove(gridTiles.get(key));
-                gridTiles.delete(key);
-            }
-            
-            if (!erase) {
-                const texName = document.getElementById('map-texture-select').value;
-                if (!texName || !textureLibrary[texName]) {
-                    alert("Seleziona prima una texture dal menù Mappa > Texture!");
-                    togglePaintMode();
-                    return;
-                }
-                
-                const cellSize = getCellSize();
-                const geometry = new THREE.PlaneGeometry(cellSize, cellSize);
-                
-                // Regola UV per Tiling continuo basato sulla posizione mondiale
-                const uvAttr = geometry.attributes.uv;
-                const uvScale = 0.1; // Rapporto di scala (10 unità = 1 ripetizione)
-                for (let i = 0; i < uvAttr.count; i++) {
-                    let u = uvAttr.getX(i);
-                    let v = uvAttr.getY(i);
-                    
-                    // Trasforma UV locali [0,1] in UV mondiali basati sulla posizione della mesh
-                    // x e z sono i centri della cella
-                    const worldX = x + (u - 0.5) * cellSize;
-                    const worldZ = z + (v - 0.5) * cellSize;
-                    
-                    uvAttr.setXY(i, worldX * uvScale, worldZ * uvScale);
-                }
-                
-                const material = new THREE.MeshPhongMaterial({ map: textureLibrary[texName], side: THREE.DoubleSide });
-                const tile = new THREE.Mesh(geometry, material);
-                
-                tile.rotation.x = -Math.PI / 2;
-                
-                // Rotazione Casuale se attiva
-                if (document.getElementById('paint-random-rot').checked) {
-                    const rots = [0, Math.PI/2, Math.PI, Math.PI * 1.5];
-                    tile.rotation.z = rots[Math.floor(Math.random() * rots.length)];
-                }
-
-                tile.position.set(x, 0.005, z); // Leggermente sopra il piano base
-                tile.receiveShadow = true;
-                
-                scene.add(tile);
-                gridTiles.set(key, tile);
-            }
-            
+            scene.add(currentPreview);
+            if (controls) controls.enabled = false;
+            document.getElementById('placement-hint').style.display = 'block';
             needsRender = true;
         }
 
         function fixObject() {
             if (!isPlacing || !currentPreview) return;
-            console.log("Fixing object:", currentPreview.userData.assetName);
-            
             const final = currentPreview.clone();
-            final.traverse(n => { 
-                if(n.isMesh) { 
-                    n.castShadow = true; 
-                    n.receiveShadow = false; 
-                    if (n.geometry && n.geometry.attributes.position) {
-                        polyCount += n.geometry.attributes.position.count / 3;
-                    }
+            final.userData = { ...currentPreview.userData };
+            final.userData.name = currentPreview.userData.assetName + "_" + (objects.length + 1);
+            
+            final.traverse(n => {
+                if (n.isMesh) {
+                    n.castShadow = true;
+                    n.receiveShadow = false;
+                    if (n.geometry && n.geometry.attributes.position) polyCount += n.geometry.attributes.position.count / 3;
                 }
             });
 
-            // Se è un personaggio, ricrea il mixer per l'oggetto finale
-            if (currentPreview.userData.isChar && currentPreview.userData.originalAnimations) {
+            if (final.userData.isChar && final.userData.originalAnimations) {
                 const mixer = new THREE.AnimationMixer(final);
-                const actions = {};
-                currentPreview.userData.originalAnimations.forEach(clip => {
-                    const cname = clip.name.toLowerCase();
+                const anims = {};
+                final.userData.originalAnimations.forEach(clip => {
+                    const n = clip.name.toLowerCase();
                     const action = mixer.clipAction(clip);
-                    if (cname.includes('idle')) actions.idle = action;
-                    if (cname.includes('walk') || cname.includes('run')) actions.walk = action;
+                    if (n.includes('idle')) anims.idle = action;
+                    if (n.includes('walk') || n.includes('run')) anims.walk = action;
                 });
-                if (!actions.idle) actions.idle = mixer.clipAction(currentPreview.userData.originalAnimations[0]);
-                if (!actions.walk && currentPreview.userData.originalAnimations.length > 1) actions.walk = mixer.clipAction(currentPreview.userData.originalAnimations[1]);
-                
+                if (!anims.idle) anims.idle = mixer.clipAction(final.userData.originalAnimations[0]);
                 final.userData.mixer = mixer;
-                final.userData.animations = actions;
-                final.userData.originalAnimations = currentPreview.userData.originalAnimations;
-                if (actions.idle) actions.idle.play();
+                final.userData.animations = anims;
+                if (anims.idle) anims.idle.play();
                 activeMixers.add(mixer);
             }
 
             scene.add(final);
             objects.push(final);
-            final.userData.name = currentPreview.userData.assetName + "_" + objects.length;
-            final.userData.isChar = currentPreview.userData.isChar;
-            renderer.shadowMap.needsUpdate = true;
             stopPlacement();
-            updateHierarchy();
             select(final);
         }
 
-        function spawnBasic(type) {
-            stopPlacement();
-            isPlacing = true;
-            if (controls) controls.enabled = false;
-            document.getElementById('placement-hint').style.display = 'block';
-            if (type === 'cube') currentPreview = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), new THREE.MeshStandardMaterial({ color: 0x00f2ff }));
-            else currentPreview = new THREE.Mesh(new THREE.SphereGeometry(1.2, 32, 32), new THREE.MeshStandardMaterial({ color: 0x00ff88 }));
-            currentPreview.userData.assetName = type;
-            scene.add(currentPreview);
-            needsRender = true;
-        }
-
         function stopPlacement() {
-            console.log("Stopping placement...");
             if (currentPreview) scene.remove(currentPreview);
             isPlacing = false;
             currentPreview = null;
@@ -1192,240 +649,49 @@
             needsRender = true;
         }
 
-        function onKey(e) {
-            if (e.code === 'Escape') stopPlacement();
-            if (!isPlacing || !currentPreview) return;
-            if (e.code === 'Space') { e.preventDefault(); fixObject(); }
-            const k = e.key.toLowerCase();
-            const s = Math.PI / 36;
-            if (k === 'r') currentPreview.rotation.y += s;
-            if (k === 't') currentPreview.rotation.y -= s;
-            if (k === 'f') currentPreview.rotation.x += s;
-            if (k === 'g') currentPreview.rotation.x -= s;
-            if (k === 'v') currentPreview.rotation.z += s;
-            if (k === 'b') currentPreview.rotation.z -= s;
-            needsRender = true;
-        }
+        // --- PAINT ---
 
-        function onWheel(e) {
-            if (!isPlacing || !currentPreview) return;
-            e.preventDefault();
-            const f = e.deltaY > 0 ? 0.92 : 1.08;
-            currentPreview.scale.multiplyScalar(f);
-            needsRender = true;
-        }
-
-        document.getElementById('file-in').onchange = (e) => {
-            const file = e.target.files[0];
-            if (!file || !loader) return;
-            const url = URL.createObjectURL(file);
-            document.getElementById('loading-status').innerText = "Optimizing mesh...";
-            document.getElementById('loading-screen').style.display = 'flex';
-            
-            loader.load(url, (gltf) => {
-                const name = file.name.split('.')[0];
-                const model = gltf.scene;
-                
-                // Tentativo di ottimizzazione: Unione geometrie semplici
-                /* 
-                   In una versione futura potremmo usare BufferGeometryUtils.mergeBufferGeometries
-                   ma per ora ci assicuriamo che ogni mesh sia efficiente.
-                */
-                model.traverse(n => {
-                    if (n.isMesh) {
-                        n.castShadow = true;
-                        n.receiveShadow = false; // Evita self-shadowing costoso
-                        if (n.material) {
-                            // Forza Alpha Test invece di blending (molto più veloce)
-                            if (n.material.transparent) {
-                                n.material.transparent = false;
-                                n.material.alphaTest = 0.5;
-                            }
-                            n.material.needsUpdate = true;
-                        }
-                    }
-                });
-
-                currentFolder.assets.push({ name: name, scene: model });
-                renderShelf();
-                spawnGLB(name, model);
-                document.getElementById('loading-screen').style.display = 'none';
-            });
-        };
-
-        function loadCharacter(e) {
-            const file = e.target.files[0];
-            if (!file || !loader) return;
-            const url = URL.createObjectURL(file);
-            document.getElementById('loading-status').innerText = "Caricamento Personaggio...";
-            document.getElementById('loading-screen').style.display = 'flex';
-            
-            loader.load(url, (gltf) => {
-                try {
-                    const name = file.name.split('.')[0];
-                    const model = gltf.scene;
-                    
-                    // 1. Calcola Bounding Box originale
-                    const bbox = new THREE.Box3().setFromObject(model);
-                    const size = new THREE.Vector3();
-                    bbox.getSize(size);
-                    
-                    // 2. Normalizzazione Dimensioni (Target: altezza ~2 unità)
-                    const maxDim = Math.max(size.x, size.y, size.z);
-                    const scale = 2 / maxDim;
-                    model.scale.set(scale, scale, scale);
-                    
-                    // 3. Reset Pivot
-                    const pivotGroup = new THREE.Group();
-                    model.position.y = -bbox.min.y * scale;
-                    pivotGroup.add(model);
-                    pivotGroup.userData.isChar = true;
-                    pivotGroup.userData.originalAnimations = gltf.animations; // Memorizza le clip originali
-
-                    pivotGroup.traverse(n => {
-                        if (n.isMesh) {
-                            n.castShadow = true;
-                            n.receiveShadow = false;
-                        }
-                    });
-
-                    if (!rootFolder.folders["Personaggi"]) rootFolder.folders["Personaggi"] = { folders: {}, assets: [] };
-                    rootFolder.folders["Personaggi"].assets.push({ name: name, scene: pivotGroup, isChar: true });
-                    renderShelf();
-                    
-                    spawnGLB(name, pivotGroup, true);
-                    document.getElementById('loading-status').innerText = "Normalizzazione completata.";
-                } catch (err) {
-                    console.error("Errore caricamento personaggio:", err);
-                    alert("Errore nel caricamento del personaggio. Controlla la console.");
-                } finally {
-                    setTimeout(() => document.getElementById('loading-screen').style.display = 'none', 500);
-                }
-            }, (xhr) => {
-                const p = Math.round(xhr.loaded / xhr.total * 100);
-                document.getElementById('loading-status').innerText = `Caricamento: ${p}%`;
-            }, (err) => {
-                console.error("Errore loader:", err);
-                alert("Errore nel download del file GLB.");
-                document.getElementById('loading-screen').style.display = 'none';
-            });
-        }
-
-        function spawnGLB(name, sceneObj, isChar = false) {
-            console.log("Spawning GLB:", name, "isChar:", isChar);
+        function togglePaintMode() {
+            isPainting = !isPainting;
             stopPlacement();
-            if (isPainting) togglePaintMode();
-            
-            isPlacing = true;
-            currentPreview = sceneObj.clone();
-            currentPreview.userData.assetName = name;
-            currentPreview.userData.isChar = isChar;
-            
-            if (isChar && sceneObj.userData.originalAnimations) {
-                const mixer = new THREE.AnimationMixer(currentPreview);
-                const actions = {};
-                sceneObj.userData.originalAnimations.forEach(clip => {
-                    const cname = clip.name.toLowerCase();
-                    const action = mixer.clipAction(clip);
-                    if (cname.includes('idle')) actions.idle = action;
-                    if (cname.includes('walk') || cname.includes('run')) actions.walk = action;
-                });
-                if (!actions.idle) actions.idle = mixer.clipAction(sceneObj.userData.originalAnimations[0]);
-                if (!actions.walk && sceneObj.userData.originalAnimations.length > 1) actions.walk = mixer.clipAction(sceneObj.userData.originalAnimations[1]);
-                
-                currentPreview.userData.mixer = mixer;
-                currentPreview.userData.animations = actions;
-                currentPreview.userData.originalAnimations = sceneObj.userData.originalAnimations;
-                if (actions.idle) actions.idle.play();
-                activeMixers.add(mixer);
-            }
-
-            scene.add(currentPreview);
-            if (controls) controls.enabled = false;
-            document.getElementById('placement-hint').style.display = 'block';
-            needsRender = true;
-        }
-
-        function renderShelf() {
-            const grid = document.getElementById('asset-grid');
-            grid.innerHTML = "";
-            if (currentFolder !== rootFolder) {
-                grid.appendChild(createAssetBox("🔙", "Back", () => { currentFolder = rootFolder; renderShelf(); }));
-            } else {
-                grid.appendChild(createAssetBox("📦", "Cube", () => spawnBasic('cube'), (e) => showPreview(e, 'cube')));
-                grid.appendChild(createAssetBox("🟡", "Sphere", () => spawnBasic('sphere'), (e) => showPreview(e, 'sphere')));
-            }
-            for (let f in currentFolder.folders) {
-                grid.appendChild(createAssetBox("📁", f, () => { currentFolder = currentFolder.folders[f]; renderShelf(); }));
-            }
-            currentFolder.assets.forEach(a => {
-                grid.appendChild(createAssetBox(a.isChar ? "👤" : "🎨", a.name, () => spawnGLB(a.name, a.scene, a.isChar), (e) => showPreview(e, a)));
-            });
-        }
-
-        function createAssetBox(icon, name, clickFn, hoverFn) {
-            const d = document.createElement('div');
-            d.className = 'asset-box';
-            d.onclick = clickFn;
-            if (hoverFn) { d.onmouseenter = hoverFn; d.onmouseleave = hidePreview; }
-            d.innerHTML = `<div style="font-size: 24px;">${icon}</div><span>${name}</span>`;
-            return d;
-        }
-
-        function createDir() {
-            const n = prompt("Folder Name:");
-            if (n) { currentFolder.folders[n] = { folders: {}, assets: [] }; renderShelf(); }
-        }
-
-        function select(obj) {
-            selected = obj;
-            updateHierarchy();
-            const ui = document.getElementById('inspector-ui');
-            if (!obj) { ui.innerHTML = '<div style="text-align:center;color:var(--text-dim);margin-top:100px;"><i class="fas fa-hand-pointer" style="font-size:32px;margin-bottom:16px;opacity:0.1"></i><br>Select an object to edit properties</div>'; return; }
-            ui.innerHTML = `
-                <div class="control-group">
-                    <label>NAME</label>
-                    <input type="text" value="${obj.userData.name}" oninput="selected.userData.name=this.value;updateHierarchy()">
-                </div>
-                <div class="control-group">
-                    <label>POSITION (X, Y, Z)</label>
-                    <div style="display:flex; gap:8px;">
-                        <input type="number" step="0.5" value="${obj.position.x}" oninput="selected.position.x=parseFloat(this.value);needsRender=true">
-                        <input type="number" step="0.5" value="${obj.position.y}" oninput="selected.position.y=parseFloat(this.value);needsRender=true">
-                        <input type="number" step="0.5" value="${obj.position.z}" oninput="selected.position.z=parseFloat(this.value);needsRender=true">
-                    </div>
-                </div>
-                <div class="control-group">
-                    <label>ROTATION (X, Y, Z)°</label>
-                    <div style="display:flex; gap:8px;">
-                        <input type="number" step="5" value="${Math.round(obj.rotation.x * 180/Math.PI)}" oninput="selected.rotation.x=parseFloat(this.value) * Math.PI/180;needsRender=true">
-                        <input type="number" step="5" value="${Math.round(obj.rotation.y * 180/Math.PI)}" oninput="selected.rotation.y=parseFloat(this.value) * Math.PI/180;needsRender=true">
-                        <input type="number" step="5" value="${Math.round(obj.rotation.z * 180/Math.PI)}" oninput="selected.rotation.z=parseFloat(this.value) * Math.PI/180;needsRender=true">
-                    </div>
-                </div>
-                <div class="control-group">
-                    <label>SCALE</label>
-                    <input type="number" step="0.1" value="${obj.scale.x.toFixed(2)}" oninput="const s=parseFloat(this.value); selected.scale.set(s,s,s);needsRender=true">
-                </div>
-                <button class="btn" style="width:100%;background:rgba(255,50,50,0.1);border-color:rgba(255,50,50,0.3);color:#ff5555;margin-top:24px;justify-content:center;" onclick="delSel()">
-                    <i class="fas fa-trash"></i> DELETE OBJECT
-                </button>
-            `;
-        }
-
-        function delSel() {
-            if (!selected) return;
-            selected.traverse(n => {
-                if (n.isMesh && n.geometry && n.geometry.attributes.position) {
-                    polyCount -= n.geometry.attributes.position.count / 3;
+            const btn = document.getElementById('btn-paint');
+            const hint = document.getElementById('paint-hint');
+            if (isPainting) {
+                btn.style.background = 'var(--accent-glow)';
+                btn.style.borderColor = 'var(--accent)';
+                hint.style.display = 'block';
+                if (!brushCursor) {
+                    brushCursor = new THREE.Mesh(new THREE.PlaneGeometry(2,2), new THREE.MeshBasicMaterial({color: 0x00f2ff, transparent: true, opacity: 0.3, side: THREE.DoubleSide}));
+                    brushCursor.rotation.x = -Math.PI / 2;
+                    scene.add(brushCursor);
                 }
-            });
-            scene.remove(selected);
-            objects = objects.filter(o => o !== selected);
-            renderer.shadowMap.needsUpdate = true; // Update shadow map once
-            select(null);
+                brushCursor.visible = true;
+            } else {
+                btn.style.background = ''; btn.style.borderColor = ''; hint.style.display = 'none';
+                if (brushCursor) brushCursor.visible = false;
+            }
             needsRender = true;
         }
+
+        function paintTile(erase = false) {
+            if (!brushCursor || !brushCursor.visible) return;
+            const x = brushCursor.position.x, z = brushCursor.position.z;
+            const key = `${x},${z}`;
+            if (gridTiles.has(key)) { scene.remove(gridTiles.get(key)); gridTiles.delete(key); }
+            if (!erase) {
+                const texName = document.getElementById('map-texture-select').value;
+                if (!texName || !textureLibrary[texName]) { alert("Seleziona una texture!"); togglePaintMode(); return; }
+                const tile = new THREE.Mesh(new THREE.PlaneGeometry(2,2), new THREE.MeshPhongMaterial({ map: textureLibrary[texName], side: THREE.DoubleSide }));
+                tile.rotation.x = -Math.PI / 2;
+                tile.position.set(x, 0.005, z);
+                tile.receiveShadow = true;
+                scene.add(tile);
+                gridTiles.set(key, tile);
+            }
+            needsRender = true;
+        }
+
+        // --- UI & HIERARCHY ---
 
         function updateHierarchy() {
             const list = document.getElementById('h-list');
@@ -1433,34 +699,187 @@
             objects.forEach(o => {
                 const d = document.createElement('div');
                 d.className = 'h-item' + (selected === o ? ' selected' : '');
-                d.innerHTML = `<i class="fas fa-cube" style="font-size:10px;opacity:0.5"></i> ${o.userData.name}`;
+                d.innerHTML = `<i class="fas ${o.userData.isChar ? 'fa-user' : 'fa-cube'}" style="font-size:10px;opacity:0.5"></i> ${o.userData.name}`;
                 d.onclick = () => select(o);
                 list.appendChild(d);
             });
         }
 
-        function exportJSON() {
-            const tilesData = [];
-            gridTiles.forEach((tile, key) => {
-                tilesData.push({
-                    k: key,
-                    t: tile.material.map.name || Object.keys(textureLibrary).find(k => textureLibrary[k] === tile.material.map) || "unknown"
-                });
-            });
-            
-            const data = { 
-                objects: objects.map(o => ({ 
-                    name: o.userData.name, 
-                    type: o.userData.isChar ? 'character' : 'object',
-                    p: [o.position.x, o.position.y, o.position.z], 
-                    r: [o.rotation.x, o.rotation.y, o.rotation.z], 
-                    s: [o.scale.x, o.scale.y, o.scale.z] 
-                })),
-                tiles: tilesData
-            };
-            const b = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-            const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'project_export.json'; a.click();
+        function select(obj) {
+            selected = obj;
+            updateHierarchy();
+            const ui = document.getElementById('inspector-ui');
+            if (!obj) { ui.innerHTML = '<div style="text-align:center;color:var(--text-dim);margin-top:100px;">Select an object</div>'; return; }
+            ui.innerHTML = `
+                <div class="control-group"><label>NAME</label><input type="text" value="${obj.userData.name}" oninput="selected.userData.name=this.value;updateHierarchy()"></div>
+                <div class="control-group"><label>POSITION</label><div style="display:flex;gap:4px">
+                    <input type="number" step="0.5" value="${obj.position.x}" oninput="selected.position.x=parseFloat(this.value);needsRender=true">
+                    <input type="number" step="0.5" value="${obj.position.z}" oninput="selected.position.z=parseFloat(this.value);needsRender=true">
+                </div></div>
+                <div class="control-group"><label>SCALE</label><input type="number" step="0.1" value="${obj.scale.x.toFixed(2)}" oninput="const s=parseFloat(this.value); selected.scale.set(s,s,s);needsRender=true"></div>
+                <button class="btn" style="width:100%;color:#ff5555;justify-content:center;" onclick="deleteObject()"><i class="fas fa-trash"></i> DELETE</button>
+            `;
+            needsRender = true;
         }
+
+        function deleteObject() {
+            if (!selected) return;
+            if (selected.userData.mixer) activeMixers.delete(selected.userData.mixer);
+            scene.remove(selected);
+            objects = objects.filter(o => o !== selected);
+            select(null);
+        }
+
+        // --- PLAY MODE ---
+
+        function startPlayMode() {
+            playerChar = selected && selected.userData.isChar ? selected : objects.find(o => o.userData.isChar);
+            if (!playerChar) { alert("Seleziona un personaggio!"); return; }
+            isPlaying = true; if (controls) controls.enabled = false;
+            document.getElementById('layout').style.display = 'none';
+            camera.position.copy(playerChar.position).add(cameraOffset); camera.lookAt(playerChar.position);
+            document.getElementById('game-crosshair').style.display = 'block';
+        }
+
+        function updatePlayMode() {
+            if (!isPlaying || !playerChar) return;
+            const speed = 0.15, move = new THREE.Vector3();
+            if (keys['KeyW']) move.z -= 1; if (keys['KeyS']) move.z += 1;
+            if (keys['KeyA']) move.x -= 1; if (keys['KeyD']) move.x += 1;
+            const anims = playerChar.userData.animations;
+            if (move.lengthSq() > 0) {
+                move.normalize(); playerChar.position.addScaledVector(move, speed);
+                playerChar.rotation.y = Math.atan2(move.x, move.z);
+                if (anims && anims.walk && !anims.walk.isRunning()) { if (anims.idle) anims.idle.fadeOut(0.2); anims.walk.reset().fadeIn(0.2).play(); }
+            } else {
+                if (anims && anims.idle && !anims.idle.isRunning()) { if (anims.walk) anims.walk.fadeOut(0.2); anims.idle.reset().fadeIn(0.2).play(); }
+            }
+            camera.position.lerp(playerChar.position.clone().add(cameraOffset), 0.1);
+            camera.lookAt(playerChar.position);
+        }
+
+        function stopPlayMode() { isPlaying = false; if (controls) controls.enabled = true; document.getElementById('layout').style.display = 'flex'; document.getElementById('game-crosshair').style.display = 'none'; needsRender = true; }
+
+        // --- ASSET MANAGEMENT ---
+
+        function renderShelf() {
+            const grid = document.getElementById('asset-grid'); grid.innerHTML = "";
+            if (currentFolder !== rootFolder) grid.appendChild(createAssetBox("🔙", "Back", () => { currentFolder = rootFolder; renderShelf(); }));
+            else grid.appendChild(createAssetBox("📦", "Cube", () => spawnBasic('cube'), (e) => showPreview(e, 'cube')));
+            for (let f in currentFolder.folders) grid.appendChild(createAssetBox("📁", f, () => { currentFolder = currentFolder.folders[f]; renderShelf(); }));
+            currentFolder.assets.forEach(a => grid.appendChild(createAssetBox(a.isChar ? "👤" : "🎨", a.name, () => spawnGLB(a.name, a.scene, a.isChar), (e) => showPreview(e, a))));
+        }
+        function createAssetBox(icon, name, clickFn, hoverFn) {
+            const d = document.createElement('div'); d.className = 'asset-box'; d.onclick = clickFn;
+            if (hoverFn) { d.onmouseenter = hoverFn; d.onmouseleave = hidePreview; }
+            d.innerHTML = `<div style="font-size: 24px;">${icon}</div><span>${name}</span>`;
+            return d;
+        }
+        function spawnBasic(type) { stopPlacement(); isPlacing = true; if (controls) controls.enabled = false; document.getElementById('placement-hint').style.display = 'block'; currentPreview = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), new THREE.MeshStandardMaterial({ color: 0x00f2ff })); currentPreview.userData.assetName = type; scene.add(currentPreview); needsRender = true; }
+        function loadCharacter(e) {
+            const file = e.target.files[0]; if (!file) return;
+            const url = URL.createObjectURL(file);
+            document.getElementById('loading-screen').style.display = 'flex';
+            loader.load(url, (gltf) => {
+                const model = gltf.scene;
+                const bbox = new THREE.Box3().setFromObject(model);
+                const size = new THREE.Vector3(); bbox.getSize(size);
+                const scale = 2 / Math.max(size.x, size.y, size.z);
+                model.scale.set(scale, scale, scale);
+                const pivot = new THREE.Group(); model.position.y = -bbox.min.y * scale; pivot.add(model);
+                pivot.userData.isChar = true; pivot.userData.originalAnimations = gltf.animations;
+                rootFolder.folders["Personaggi"].assets.push({ name: file.name.split('.')[0], scene: pivot, isChar: true });
+                renderShelf(); spawnGLB(file.name.split('.')[0], pivot, true);
+                document.getElementById('loading-screen').style.display = 'none';
+            });
+        }
+        function loadTextureFolder(e) {
+            const texLoader = new THREE.TextureLoader();
+            for (let f of e.target.files) {
+                if (f.type.startsWith('image/')) {
+                    const url = URL.createObjectURL(f);
+                    texLoader.load(url, (tex) => {
+                        textureLibrary[f.name] = tex;
+                        const opt = document.createElement('option'); opt.value = f.name; opt.textContent = f.name;
+                        document.getElementById('map-texture-select').appendChild(opt);
+                    });
+                }
+            }
+        }
+
+        // --- PREVIEW ---
+        let pScene, pCamera, pRenderer, pObj, isPreviewVisible = false;
+        function initPreview() {
+            const c = document.getElementById('hover-preview');
+            pScene = new THREE.Scene(); pScene.background = new THREE.Color(0x050505);
+            pCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 100); pCamera.position.set(5,5,5); pCamera.lookAt(0,0,0);
+            pRenderer = new THREE.WebGLRenderer({ antialias: false, alpha: true }); pRenderer.setSize(200, 200);
+            c.appendChild(pRenderer.domElement); pScene.add(new THREE.AmbientLight(0xffffff, 1.2));
+        }
+        function showPreview(e, asset) {
+            if (!pScene) initPreview();
+            const b = document.getElementById('hover-preview'); b.style.display = 'block'; b.style.left = (e.clientX + 24) + 'px'; b.style.top = (e.clientY - 200) + 'px';
+            isPreviewVisible = true; if (pObj) pScene.remove(pObj);
+            pObj = (asset === 'cube') ? new THREE.Mesh(new THREE.BoxGeometry(2,2,2), new THREE.MeshStandardMaterial({color: 0x00f2ff})) : asset.scene.clone();
+            pScene.add(pObj);
+        }
+        function hidePreview() { document.getElementById('hover-preview').style.display = 'none'; isPreviewVisible = false; }
+        function updatePreviewLoop() { if (isPreviewVisible && pRenderer) { if (pObj) pObj.rotation.y += 0.02; pRenderer.render(pScene, pCamera); } }
+
+        // --- MAP SETTINGS ---
+        function toggleMapMenu() { const m = document.getElementById('map-menu'); m.style.display = m.style.display === 'none' ? 'block' : 'none'; }
+        function updateMapSettings() {
+            scene.background.set(document.getElementById('map-bg').value);
+            ambientLight.intensity = parseFloat(document.getElementById('map-light').value);
+            mainGrid.visible = document.getElementById('map-grid-show').checked;
+            needsRender = true;
+        }
+        function toggleShadowsLive() { renderer.shadowMap.enabled = document.getElementById('map-shadow-show').checked; needsRender = true; }
+        function updateGroundTexture() {
+            const tex = textureLibrary[document.getElementById('map-texture-select').value];
+            if (document.getElementById('map-texture-toggle').checked && tex) {
+                tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+                const s = parseFloat(document.getElementById('map-size').value); tex.repeat.set(s/10, s/10);
+                basePlane.material.map = tex; basePlane.material.color.set(0xffffff);
+            } else { basePlane.material.map = null; basePlane.material.color.set(0x050505); }
+            basePlane.material.needsUpdate = true; needsRender = true;
+        }
+
+        // --- INIT ---
+        window.onload = () => {
+            const c = document.getElementById('canvas-container');
+            scene = new THREE.Scene(); scene.background = new THREE.Color(0x0a0a0c);
+            camera = new THREE.PerspectiveCamera(45, c.offsetWidth / c.offsetHeight, 0.1, 2000); camera.position.set(40,40,40); camera.lookAt(0,0,0);
+            renderer = new THREE.WebGLRenderer({ antialias: false }); renderer.setSize(c.offsetWidth, c.offsetHeight);
+            renderer.shadowMap.enabled = true; c.appendChild(renderer.domElement);
+            controls = new THREE.OrbitControls(camera, renderer.domElement); controls.addEventListener('change', () => needsRender = true);
+            loader = new THREE.GLTFLoader(); ambientLight = new THREE.AmbientLight(0xffffff, 0.7); scene.add(ambientLight);
+            const sun = new THREE.DirectionalLight(0xffffff, 1.0); sun.position.set(50, 100, 50); sun.castShadow = true; scene.add(sun);
+            mainGrid = new THREE.GridHelper(200, 100, 0x00f2ff, 0x222222); scene.add(mainGrid);
+            basePlane = new THREE.Mesh(new THREE.PlaneGeometry(500, 500), new THREE.MeshPhongMaterial({ color: 0x050505 }));
+            basePlane.rotation.x = -Math.PI/2; basePlane.position.y = -0.05; basePlane.receiveShadow = true; scene.add(basePlane);
+            
+            c.addEventListener('pointerdown', onClick);
+            c.addEventListener('pointermove', onMove);
+            c.addEventListener('wheel', (e) => { if (isPlacing) { e.preventDefault(); onWheel(e); } }, { passive: false });
+            document.addEventListener('keydown', (e) => { 
+                keys[e.code] = true; 
+                if (e.code === 'Escape') { stopPlacement(); stopPlayMode(); if (isPainting) togglePaintMode(); }
+                if (e.code === 'Space' || e.code === 'Enter') { if (isPlacing) { e.preventDefault(); fixObject(); } }
+                needsRender = true;
+            });
+            document.addEventListener('keyup', (e) => keys[e.code] = false);
+            window.addEventListener('resize', onResize); onResize();
+            document.getElementById('loading-screen').style.display = 'none'; renderShelf(); animate();
+        };
+
+        function exportJSON() {
+            const data = { objects: objects.map(o => ({ n: o.userData.name, p: o.position.toArray() })) };
+            const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(data)], {type:'application/json'})); a.download = 'map.json'; a.click();
+        }
+        function openCompressor() { document.getElementById('comp-modal').style.display = 'flex'; }
+        function closeCompressor() { document.getElementById('comp-modal').style.display = 'none'; }
+        function createDir() { const n = prompt("Folder Name:"); if (n) { currentFolder.folders[n] = { folders: {}, assets: [] }; renderShelf(); } }
     </script>
 </body>
 </html>
