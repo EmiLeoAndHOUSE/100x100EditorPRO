@@ -404,6 +404,10 @@
                             <span style="color: #fff; font-weight: 700; border-top: 1px solid var(--border); margin-top: 8px; padding-top: 8px; display: block;">SELECT TEXTURE FROM MAP MENU</span>
                         </div>
                     </div>
+                    <div id="game-crosshair" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); color: var(--accent); font-size: 24px; pointer-events: none; z-index: 10000; text-shadow: 0 0 10px var(--accent); text-align: center;">
+                        +
+                        <div style="position: absolute; top: 40px; left: 50%; transform: translateX(-50%); font-size: 10px; color: #fff; opacity: 0.5; white-space: nowrap; font-family: monospace; letter-spacing: 2px;">ESC TO EXIT PLAY MODE</div>
+                    </div>
                 </div>
 
                 <footer id="asset-shelf">
@@ -873,21 +877,47 @@
 
         function updatePlayMode() {
             if (!isPlaying || !pControls) return;
-            const speed = 0.2;
-            const dir = new THREE.Vector3();
-            const forward = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
-            const right = new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion);
-            forward.y = 0; right.y = 0;
-            forward.normalize(); right.normalize();
-            if (keys['KeyW']) pVelocity.add(forward.multiplyScalar(speed));
-            if (keys['KeyS']) pVelocity.sub(forward.multiplyScalar(speed));
-            if (keys['KeyA']) pVelocity.sub(right.multiplyScalar(speed));
-            if (keys['KeyD']) pVelocity.add(right.multiplyScalar(speed));
-            pVelocity.y -= 0.01;
+            const speed = 0.5; // Velocità aumentata per test più rapidi
+            const friction = 0.8;
+            
+            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+            const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+            
+            forward.y = 0; 
+            right.y = 0;
+            forward.normalize(); 
+            right.normalize();
+            
+            // Reset velocità se non ci sono tasti premuti (opzionale, ma pVelocity già gestisce l'inerzia)
+            if (keys['KeyW'] || keys['KeyS'] || keys['KeyA'] || keys['KeyD']) {
+                if (keys['KeyW']) pVelocity.addScaledVector(forward, speed);
+                if (keys['KeyS']) pVelocity.addScaledVector(forward, -speed);
+                if (keys['KeyA']) pVelocity.addScaledVector(right, -speed);
+                if (keys['KeyD']) pVelocity.addScaledVector(right, speed);
+            }
+            
+            // Gravità
+            pVelocity.y -= 0.02;
+            
+            // Applica velocità alla posizione
             camera.position.add(pVelocity);
-            pVelocity.x *= 0.85; pVelocity.z *= 0.85;
-            if (camera.position.y < 2) { camera.position.y = 2; pVelocity.y = 0; pOnGround = true; }
-            if (keys['Space'] && pOnGround) { pVelocity.y = 0.35; pOnGround = false; }
+            
+            // Inerzia/Attrito
+            pVelocity.x *= friction;
+            pVelocity.z *= friction;
+            
+            // Pavimento
+            if (camera.position.y < 5) { 
+                camera.position.y = 5; 
+                pVelocity.y = 0; 
+                pOnGround = true; 
+            }
+            
+            // Salto
+            if (keys['Space'] && pOnGround) { 
+                pVelocity.y = 0.4; 
+                pOnGround = false; 
+            }
         }
 
         function animate() {
