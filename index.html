@@ -672,29 +672,50 @@
                 basePlane.material.color.set(0x050505); 
             }
             basePlane.material.needsUpdate = true;
+            needsRender = true;
         }
 
         function loadTextureFolder(e) {
             const files = e.target.files;
             const select = document.getElementById('map-texture-select');
             const texLoader = new THREE.TextureLoader();
+            let loadedCount = 0;
             
+            let foundAny = false;
             for (let file of files) {
-                if (file.type.startsWith('image/')) {
+                const name = file.name.toLowerCase();
+                const isImage = file.type.startsWith('image/') || 
+                               name.endsWith('.jpg') || 
+                               name.endsWith('.jpeg') || 
+                               name.endsWith('.png') || 
+                               name.endsWith('.webp') || 
+                               name.endsWith('.tga');
+
+                if (isImage) {
+                    foundAny = true;
                     const url = URL.createObjectURL(file);
                     texLoader.load(url, (tex) => {
-                        const name = file.name;
-                        textureLibrary[name] = tex;
+                        textureLibrary[file.name] = tex;
                         
-                        // Aggiorna Dropdown
-                        const opt = document.createElement('option');
-                        opt.value = name;
-                        opt.textContent = name;
-                        select.appendChild(opt);
+                        // Aggiorna Dropdown se non esiste già
+                        if (!Array.from(select.options).some(opt => opt.value === file.name)) {
+                            const opt = document.createElement('option');
+                            opt.value = file.name;
+                            opt.textContent = file.name;
+                            select.appendChild(opt);
+                        }
+                        loadedCount++;
+                        console.log(`Texture caricata: ${file.name}`);
+                    }, undefined, (err) => {
+                        console.error(`Errore nel caricamento di ${file.name}:`, err);
                     });
                 }
             }
-            alert("Cartella caricata! Seleziona una texture dal menù a tendina.");
+            if (foundAny) {
+                alert("Processo di caricamento avviato! Le texture appariranno nel menù a tendina man mano che vengono elaborate.");
+            } else {
+                alert("Nessuna immagine valida trovata nella cartella selezionata (supportati: .jpg, .png, .webp, .tga)");
+            }
         }
 
         function updateMapSettings() {
@@ -718,6 +739,7 @@
                 mainGrid.visible = showGrid;
                 scene.add(mainGrid);
             }
+            needsRender = true;
         }
 
         function toggleShadowsLive() {
