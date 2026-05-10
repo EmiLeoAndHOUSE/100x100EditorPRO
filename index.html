@@ -507,12 +507,17 @@
             pScene.add(l);
         }
 
+        // Flag per evitare query DOM nel loop di animazione
+        let isPreviewVisible = false;
+        let previewBox = null;
+
         function showPreview(e, asset) {
             if (!pScene) initPreview();
-            const box = document.getElementById('hover-preview');
-            box.style.display = 'block';
-            box.style.left = (e.clientX + 24) + 'px';
-            box.style.top = (e.clientY - 200) + 'px';
+            if (!previewBox) previewBox = document.getElementById('hover-preview');
+            previewBox.style.display = 'block';
+            previewBox.style.left = (e.clientX + 24) + 'px';
+            previewBox.style.top = (e.clientY - 200) + 'px';
+            isPreviewVisible = true;
 
             if (pObj) pScene.remove(pObj);
             
@@ -542,11 +547,14 @@
         }
 
         function hidePreview() {
-            document.getElementById('hover-preview').style.display = 'none';
+            if (!previewBox) previewBox = document.getElementById('hover-preview');
+            previewBox.style.display = 'none';
+            isPreviewVisible = false;
         }
 
+        // Nessuna query DOM - usa flag booleano (zero overhead)
         function updatePreviewLoop() {
-            if (document.getElementById('hover-preview').style.display === 'block' && pRenderer) {
+            if (isPreviewVisible && pRenderer) {
                 if (pObj) pObj.rotation.y += 0.02;
                 pRenderer.render(pScene, pCamera);
             }
@@ -920,16 +928,21 @@
                    ma per ora ci assicuriamo che ogni mesh sia efficiente.
                 */
                 model.traverse(n => {
-                    if (n.isMesh) {
+                    if (n.isMesh && n.geometry) {
+                        // SEMPLIFICAZIONE AUTOMATICA (Decimazione)
+                        try {
+                            const modifier = new THREE.SimplifyModifier();
+                            const count = Math.floor(n.geometry.attributes.position.count * 0.7); // Riduzione del 70%
+                            if (count > 100) {
+                                n.geometry = modifier.modify(n.geometry, count);
+                            }
+                        } catch(err) { console.warn("Semplificazione fallita:", err); }
+
                         n.castShadow = true;
                         n.receiveShadow = false;
                         if (n.material) {
-                            // TEST DEFINITIVO: Rimuovo anche le texture
-                            n.material = new THREE.MeshBasicMaterial({ 
-                                color: 0x00ff00, // Verde standard per test alberi
-                                alphaTest: 0.5,
-                                transparent: false
-                            });
+                            n.material.precision = "lowp";
+                            n.material.alphaTest = 0.5;
                         }
                     }
                 });
