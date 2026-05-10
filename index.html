@@ -325,7 +325,7 @@
                                 <input type="checkbox" id="map-grid-show" checked onchange="updateMapSettings()"> Griglia
                             </label>
                             <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); cursor: pointer;">
-                                <input type="checkbox" id="map-shadow-show" checked onchange="updateMapSettings()"> Ombre
+                                <input type="checkbox" id="map-shadow-show" checked onchange="toggleShadowsLive()"> Ombre
                             </label>
                         </div>
 
@@ -371,8 +371,11 @@
                         <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
                             <span>RENDERER:</span> <span id="perf-fps" class="perf-val">60</span> <span>FPS</span>
                         </div>
-                        <div style="display: flex; justify-content: space-between;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
                             <span>GEOMETRY:</span> <span id="perf-poly" class="perf-val">0</span> <span>POLY</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between;">
+                            <span>CALLS:</span> <span id="perf-calls" class="perf-val">0</span>
                         </div>
                     </div>
                     <div id="placement-hint">
@@ -481,6 +484,7 @@
                 lastTime = now;
                 document.getElementById('perf-fps').innerText = fps;
                 document.getElementById('perf-poly').innerText = Math.floor(polyCount).toLocaleString();
+                document.getElementById('perf-calls').innerText = renderer.info.render.calls;
             }
         }
 
@@ -692,7 +696,7 @@
             scene.background.set(bgColor);
             if (ambientLight) ambientLight.intensity = lightIntensity;
             if (mainGrid) mainGrid.visible = showGrid;
-            if (renderer) renderer.shadowMap.enabled = showShadows;
+            // renderer.shadowMap.enabled = showShadows; // Gestito da toggleShadowsLive
             
             if (mainGrid && (mainGrid.userData.lastSize !== size || mainGrid.userData.lastColor !== gridColor)) {
                 scene.remove(mainGrid);
@@ -702,6 +706,16 @@
                 mainGrid.visible = showGrid;
                 scene.add(mainGrid);
             }
+        }
+
+        function toggleShadowsLive() {
+            const show = document.getElementById('map-shadow-show').checked;
+            renderer.shadowMap.enabled = show;
+            scene.traverse(n => {
+                if (n.isMesh) {
+                    if (n.material) n.material.needsUpdate = true;
+                }
+            });
         }
 
         window.onload = () => {
@@ -895,11 +909,37 @@
             const file = e.target.files[0];
             if (!file || !loader) return;
             const url = URL.createObjectURL(file);
+            document.getElementById('loading-status').innerText = "Optimizing mesh...";
+            document.getElementById('loading-screen').style.display = 'flex';
+            
             loader.load(url, (gltf) => {
                 const name = file.name.split('.')[0];
-                currentFolder.assets.push({ name: name, scene: gltf.scene });
+                const model = gltf.scene;
+                
+                // Tentativo di ottimizzazione: Unione geometrie semplici
+                /* 
+                   In una versione futura potremmo usare BufferGeometryUtils.mergeBufferGeometries
+                   ma per ora ci assicuriamo che ogni mesh sia efficiente.
+                */
+                model.traverse(n => {
+                    if (n.isMesh) {
+                        n.castShadow = true;
+                        n.receiveShadow = false;
+                        if (n.material) {
+                            n.material.precision = "lowp"; // Massima velocità per gli shader
+                            if (n.material.map) {
+                                n.material.alphaTest = 0.5;
+                                n.material.transparent = false; // Alpha test è più veloce del blending
+                            }
+                            n.material.needsUpdate = true;
+                        }
+                    }
+                });
+
+                currentFolder.assets.push({ name: name, scene: model });
                 renderShelf();
-                spawnGLB(name, gltf.scene);
+                spawnGLB(name, model);
+                document.getElementById('loading-screen').style.display = 'none';
             });
         };
 
