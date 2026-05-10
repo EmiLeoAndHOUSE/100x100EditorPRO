@@ -744,7 +744,7 @@
                 const sun = new THREE.DirectionalLight(0xffffff, 1.0);
                 sun.position.set(50, 100, 50);
                 sun.castShadow = true;
-                sun.shadow.mapSize.set(512, 512);
+                sun.shadow.mapSize.set(256, 256);
                 sun.shadow.camera.left = -200;
                 sun.shadow.camera.right = 200;
                 sun.shadow.camera.top = 200;
@@ -926,12 +926,13 @@
                         n.castShadow = true;
                         n.receiveShadow = false;
                         if (n.material) {
-                            n.material.precision = "lowp"; // Massima velocità per gli shader
-                            if (n.material.map) {
-                                n.material.alphaTest = 0.5;
-                                n.material.transparent = false; // Alpha test è più veloce del blending
-                            }
-                            n.material.needsUpdate = true;
+                            // TEST DIAGNOSTICO: Trasformo tutto in BasicMaterial (no calcoli luce)
+                            const oldTex = n.material.map;
+                            n.material = new THREE.MeshBasicMaterial({ 
+                                map: oldTex,
+                                alphaTest: 0.5,
+                                transparent: false
+                            });
                         }
                     }
                 });
