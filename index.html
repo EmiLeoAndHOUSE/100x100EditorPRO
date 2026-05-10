@@ -473,10 +473,9 @@
         
         // Animation & Play System
         let clock = new THREE.Clock();
-        let mixers = [];
+        let activeMixers = new Set(); // Use a Set for faster iteration of active mixers only
         let playerChar = null;
         let cameraOffset = new THREE.Vector3(20, 30, 20);
-        let activeActions = new Map(); // mesh.uuid -> { idle, walk }
 
         // Play Mode
         let isPlaying = false;
@@ -953,19 +952,19 @@
 
         function animate() {
             requestAnimationFrame(animate);
-            const delta = clock.getDelta();
             
-            // Aggiorna tutti i mixer attivi
-            objects.forEach(o => {
-                if (o.userData.mixer) o.userData.mixer.update(delta);
-            });
+            const delta = clock.getDelta();
+            if (activeMixers.size > 0) {
+                activeMixers.forEach(mixer => mixer.update(delta));
+                needsRender = true; // Forza render se ci sono animazioni attive
+            }
 
             if (isPlaying) { updatePlayMode(); needsRender = true; }
             if (controls && !isPlaying) controls.update();
             
             if (needsRender || isPlacing || isPlaying) {
                 renderer.render(scene, camera);
-                if (!isPlaying && !isPlacing) needsRender = false;
+                if (!isPlaying && !isPlacing && activeMixers.size === 0) needsRender = false;
                 updatePerformance();
             }
         }
@@ -1116,6 +1115,8 @@
 
         function fixObject() {
             if (!isPlacing || !currentPreview) return;
+            console.log("Fixing object:", currentPreview.userData.assetName);
+            
             const final = currentPreview.clone();
             final.traverse(n => { 
                 if(n.isMesh) { 
@@ -1126,11 +1127,32 @@
                     }
                 }
             });
+
+            // Se è un personaggio, ricrea il mixer per l'oggetto finale
+            if (currentPreview.userData.isChar && currentPreview.userData.originalAnimations) {
+                const mixer = new THREE.AnimationMixer(final);
+                const actions = {};
+                currentPreview.userData.originalAnimations.forEach(clip => {
+                    const cname = clip.name.toLowerCase();
+                    const action = mixer.clipAction(clip);
+                    if (cname.includes('idle')) actions.idle = action;
+                    if (cname.includes('walk') || cname.includes('run')) actions.walk = action;
+                });
+                if (!actions.idle) actions.idle = mixer.clipAction(currentPreview.userData.originalAnimations[0]);
+                if (!actions.walk && currentPreview.userData.originalAnimations.length > 1) actions.walk = mixer.clipAction(currentPreview.userData.originalAnimations[1]);
+                
+                final.userData.mixer = mixer;
+                final.userData.animations = actions;
+                final.userData.originalAnimations = currentPreview.userData.originalAnimations;
+                if (actions.idle) actions.idle.play();
+                activeMixers.add(mixer);
+            }
+
             scene.add(final);
             objects.push(final);
             final.userData.name = currentPreview.userData.assetName + "_" + objects.length;
             final.userData.isChar = currentPreview.userData.isChar;
-            renderer.shadowMap.needsUpdate = true; // Update shadow map once
+            renderer.shadowMap.needsUpdate = true;
             stopPlacement();
             updateHierarchy();
             select(final);
@@ -1149,9 +1171,10 @@
         }
 
         function stopPlacement() {
+            console.log("Stopping placement...");
             if (currentPreview) scene.remove(currentPreview);
-            currentPreview = null;
             isPlacing = false;
+            currentPreview = null;
             if (controls) controls.enabled = true;
             document.getElementById('placement-hint').style.display = 'none';
             needsRender = true;
@@ -1277,14 +1300,15 @@
         }
 
         function spawnGLB(name, sceneObj, isChar = false) {
+            console.log("Spawning GLB:", name, "isChar:", isChar);
             stopPlacement();
-            if (isPainting) togglePaintMode(); // Disattiva pennello se attivo
+            if (isPainting) togglePaintMode();
+            
             isPlacing = true;
             currentPreview = sceneObj.clone();
             currentPreview.userData.assetName = name;
             currentPreview.userData.isChar = isChar;
             
-            // Re-inizializza Mixer per il clone (fondamentale!)
             if (isChar && sceneObj.userData.originalAnimations) {
                 const mixer = new THREE.AnimationMixer(currentPreview);
                 const actions = {};
@@ -1301,6 +1325,7 @@
                 currentPreview.userData.animations = actions;
                 currentPreview.userData.originalAnimations = sceneObj.userData.originalAnimations;
                 if (actions.idle) actions.idle.play();
+                activeMixers.add(mixer);
             }
 
             scene.add(currentPreview);
