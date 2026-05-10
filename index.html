@@ -737,7 +737,8 @@
                 renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
                 renderer.setPixelRatio(1);
                 renderer.setSize(container.offsetWidth, container.offsetHeight);
-                renderer.shadowMap.enabled = false;
+                renderer.shadowMap.enabled = true;
+                renderer.shadowMap.type = THREE.PCFShadowMap;
                 container.appendChild(renderer.domElement);
 
                 controls = new THREE.OrbitControls(camera, renderer.domElement);
@@ -928,21 +929,16 @@
                    ma per ora ci assicuriamo che ogni mesh sia efficiente.
                 */
                 model.traverse(n => {
-                    if (n.isMesh && n.geometry) {
-                        // SEMPLIFICAZIONE AUTOMATICA (Decimazione)
-                        try {
-                            const modifier = new THREE.SimplifyModifier();
-                            const count = Math.floor(n.geometry.attributes.position.count * 0.7); // Riduzione del 70%
-                            if (count > 100) {
-                                n.geometry = modifier.modify(n.geometry, count);
-                            }
-                        } catch(err) { console.warn("Semplificazione fallita:", err); }
-
+                    if (n.isMesh) {
                         n.castShadow = true;
-                        n.receiveShadow = false;
+                        n.receiveShadow = false; // Evita self-shadowing costoso
                         if (n.material) {
-                            n.material.precision = "lowp";
-                            n.material.alphaTest = 0.5;
+                            // Forza Alpha Test invece di blending (molto più veloce)
+                            if (n.material.transparent) {
+                                n.material.transparent = false;
+                                n.material.alphaTest = 0.5;
+                            }
+                            n.material.needsUpdate = true;
                         }
                     }
                 });
