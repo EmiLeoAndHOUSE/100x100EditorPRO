@@ -494,7 +494,7 @@
             pCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
             pCamera.position.set(5, 5, 5);
             pCamera.lookAt(0,0,0);
-            pRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            pRenderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
             pRenderer.setSize(200, 200);
             container.appendChild(pRenderer.domElement);
             pScene.add(new THREE.AmbientLight(0xffffff, 1.2));
@@ -713,11 +713,11 @@
                 camera.position.set(40, 40, 40);
                 camera.lookAt(0, 0, 0);
 
-                renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+                renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
                 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.2));
                 renderer.setSize(container.offsetWidth, container.offsetHeight);
                 renderer.shadowMap.enabled = true;
-                renderer.shadowMap.type = THREE.PCFShadowMap;
+                renderer.shadowMap.type = THREE.BasicShadowMap;
                 container.appendChild(renderer.domElement);
 
                 controls = new THREE.OrbitControls(camera, renderer.domElement);
