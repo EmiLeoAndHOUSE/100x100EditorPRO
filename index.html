@@ -715,14 +715,14 @@
 
                 const isLocal = window.location.protocol === 'file:';
                 renderer = new THREE.WebGLRenderer({ 
-                    antialias: !isLocal, 
+                    antialias: false, 
                     powerPreference: "high-performance",
-                    precision: isLocal ? "mediump" : "highp"
+                    precision: "mediump"
                 });
-                renderer.setPixelRatio(isLocal ? 1 : Math.min(window.devicePixelRatio, 1.5));
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.2));
                 renderer.setSize(container.offsetWidth, container.offsetHeight);
                 renderer.shadowMap.enabled = true;
-                renderer.shadowMap.type = isLocal ? THREE.BasicShadowMap : THREE.PCFSoftShadowMap;
+                renderer.shadowMap.type = THREE.PCFShadowMap;
                 container.appendChild(renderer.domElement);
 
                 controls = new THREE.OrbitControls(camera, renderer.domElement);
@@ -734,7 +734,7 @@
                 const sun = new THREE.DirectionalLight(0xffffff, 1.0);
                 sun.position.set(50, 100, 50);
                 sun.castShadow = true;
-                sun.shadow.mapSize.set(1024, 1024);
+                sun.shadow.mapSize.set(512, 512);
                 sun.shadow.camera.left = -200;
                 sun.shadow.camera.right = 200;
                 sun.shadow.camera.top = 200;
