@@ -904,8 +904,8 @@
             if (isPainting && brushCursor) {
                 if (pt) {
                     const cellSize = getCellSize();
-                    brushCursor.position.x = Math.round(pt.x / cellSize) * cellSize;
-                    brushCursor.position.z = Math.round(pt.z / cellSize) * cellSize;
+                    brushCursor.position.x = Math.floor(pt.x / cellSize) * cellSize + cellSize / 2;
+                    brushCursor.position.z = Math.floor(pt.z / cellSize) * cellSize + cellSize / 2;
                     brushCursor.position.y = 0.01;
                     brushCursor.visible = true;
                     needsRender = true;
