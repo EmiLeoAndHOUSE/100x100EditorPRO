@@ -470,6 +470,13 @@
         let basePlane = null;
         let polyCount = 0;
         let containerRect = null;
+        
+        // Animation & Play System
+        let clock = new THREE.Clock();
+        let mixers = [];
+        let playerChar = null;
+        let cameraOffset = new THREE.Vector3(20, 30, 20);
+        let activeActions = new Map(); // mesh.uuid -> { idle, walk }
 
         // Play Mode
         let isPlaying = false;
@@ -478,22 +485,32 @@
         let pOnGround = true;
 
         function startPlayMode() {
-            if (!pControls) {
-                pControls = new THREE.PointerLockControls(camera, document.body);
-                pControls.addEventListener('lock', () => {
-                    isPlaying = true;
-                    document.getElementById('layout').style.display = 'none';
-                    document.getElementById('game-crosshair').style.display = 'block';
-                });
-                pControls.addEventListener('unlock', () => {
-                    isPlaying = false;
-                    document.getElementById('layout').style.display = 'flex';
-                    document.getElementById('game-crosshair').style.display = 'none';
-                    if (controls) controls.enabled = true;
-                });
+            if (selected && selected.userData.isChar) {
+                playerChar = selected;
+            } else {
+                playerChar = objects.find(o => o.userData.isChar);
             }
+            
+            if (!playerChar) {
+                alert("Seleziona o aggiungi un personaggio per entrare in modalità Play!");
+                return;
+            }
+            
+            isPlaying = true;
             if (controls) controls.enabled = false;
-            pControls.lock();
+            document.getElementById('layout').style.display = 'none';
+            
+            // Posiziona camera
+            camera.position.copy(playerChar.position).add(cameraOffset);
+            camera.lookAt(playerChar.position);
+        }
+
+        function stopPlayMode() {
+            isPlaying = false;
+            playerChar = null;
+            if (controls) controls.enabled = true;
+            document.getElementById('layout').style.display = 'flex';
+            needsRender = true;
         }
 
         // Performance
@@ -830,6 +847,7 @@
 
                 document.addEventListener('keydown', (e) => {
                     keys[e.code] = true;
+                    if (e.code === 'Escape' && isPlaying) stopPlayMode();
                     needsRender = true;
                 });
                 document.addEventListener('keyup', (e) => {
@@ -876,59 +894,66 @@
         function onKeyUp(e) { keys[e.code] = false; }
 
         function updatePlayMode() {
-            if (!isPlaying || !pControls) return;
-            const speed = 0.5; // Velocità aumentata per test più rapidi
-            const friction = 0.8;
+            if (!isPlaying || !playerChar) return;
             
-            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-            const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+            const speed = 0.15;
+            const moveDir = new THREE.Vector3(0, 0, 0);
             
-            forward.y = 0; 
-            right.y = 0;
-            forward.normalize(); 
-            right.normalize();
+            if (keys['KeyW']) moveDir.z -= 1;
+            if (keys['KeyS']) moveDir.z += 1;
+            if (keys['KeyA']) moveDir.x -= 1;
+            if (keys['KeyD']) moveDir.x += 1;
             
-            // Reset velocità se non ci sono tasti premuti (opzionale, ma pVelocity già gestisce l'inerzia)
-            if (keys['KeyW'] || keys['KeyS'] || keys['KeyA'] || keys['KeyD']) {
-                if (keys['KeyW']) pVelocity.addScaledVector(forward, speed);
-                if (keys['KeyS']) pVelocity.addScaledVector(forward, -speed);
-                if (keys['KeyA']) pVelocity.addScaledVector(right, -speed);
-                if (keys['KeyD']) pVelocity.addScaledVector(right, speed);
+            const mixer = playerChar.userData.mixer;
+            const anims = playerChar.userData.animations;
+
+            if (moveDir.lengthSq() > 0) {
+                moveDir.normalize();
+                
+                // Muovi personaggio
+                playerChar.position.addScaledVector(moveDir, speed);
+                
+                // Ruota personaggio verso la direzione
+                const targetAngle = Math.atan2(moveDir.x, moveDir.z);
+                playerChar.rotation.y = targetAngle;
+                
+                // Animazione Walk
+                if (anims && anims.walk && !anims.walk.isRunning()) {
+                    if (anims.idle) anims.idle.fadeOut(0.2);
+                    anims.walk.reset().fadeIn(0.2).play();
+                }
+            } else {
+                // Animazione Idle
+                if (anims && anims.idle && !anims.idle.isRunning()) {
+                    if (anims.walk) anims.walk.fadeOut(0.2);
+                    anims.idle.reset().fadeIn(0.2).play();
+                }
             }
             
-            // Gravità
-            pVelocity.y -= 0.02;
+            // La telecamera segue il player
+            const targetCamPos = playerChar.position.clone().add(cameraOffset);
+            camera.position.lerp(targetCamPos, 0.1);
+            camera.lookAt(playerChar.position);
             
-            // Applica velocità alla posizione
-            camera.position.add(pVelocity);
-            
-            // Inerzia/Attrito
-            pVelocity.x *= friction;
-            pVelocity.z *= friction;
-            
-            // Pavimento
-            if (camera.position.y < 5) { 
-                camera.position.y = 5; 
-                pVelocity.y = 0; 
-                pOnGround = true; 
-            }
-            
-            // Salto
-            if (keys['Space'] && pOnGround) { 
-                pVelocity.y = 0.4; 
-                pOnGround = false; 
-            }
+            needsRender = true;
         }
 
         function animate() {
             requestAnimationFrame(animate);
-            updatePerformance();
-            updatePreviewLoop();
-            if (isPlaying) { updatePlayMode(); needsRender = true; }
+            const delta = clock.getDelta();
             
-            if (needsRender && renderer && scene && camera) {
+            // Aggiorna tutti i mixer attivi
+            objects.forEach(o => {
+                if (o.userData.mixer) o.userData.mixer.update(delta);
+            });
+
+            if (isPlaying) { updatePlayMode(); needsRender = true; }
+            if (controls && !isPlaying) controls.update();
+            
+            if (needsRender || isPlacing || isPlaying) {
                 renderer.render(scene, camera);
-                needsRender = false;
+                if (!isPlaying && !isPlacing) needsRender = false;
+                updatePerformance();
             }
         }
 
@@ -1195,19 +1220,31 @@
                 const scale = 2 / maxDim;
                 model.scale.set(scale, scale, scale);
                 
-                // 3. Reset Pivot: Sposta la geometria interna in modo che i piedi siano a Y=0
-                const offsetY = -bbox.min.y;
-                model.traverse(n => {
-                    if (n.isMesh) {
-                        // Spostiamo i vertici o la mesh stessa se è figlia diretta
-                        // Per semplicità, spostiamo le mesh figlie del gruppo radice
-                    }
-                });
-                // Metodo più pulito: avvolgi in un gruppo pivot
+                // 3. Reset Pivot
                 const pivotGroup = new THREE.Group();
-                model.position.y = offsetY * scale;
+                model.position.y = -bbox.min.y * scale;
                 pivotGroup.add(model);
                 pivotGroup.userData.isChar = true;
+                
+                // 4. Gestione Animazioni
+                if (gltf.animations && gltf.animations.length > 0) {
+                    const mixer = new THREE.AnimationMixer(pivotGroup);
+                    const actions = {};
+                    gltf.animations.forEach(clip => {
+                        const name = clip.name.toLowerCase();
+                        const action = mixer.clipAction(clip);
+                        if (name.includes('idle')) actions.idle = action;
+                        if (name.includes('walk') || name.includes('run')) actions.walk = action;
+                    });
+                    
+                    // Se non trova nomi standard, usa le prime due
+                    if (!actions.idle) actions.idle = mixer.clipAction(gltf.animations[0]);
+                    if (!actions.walk && gltf.animations.length > 1) actions.walk = mixer.clipAction(gltf.animations[1]);
+                    
+                    pivotGroup.userData.animations = actions;
+                    pivotGroup.userData.mixer = mixer;
+                    if (actions.idle) actions.idle.play();
+                }
 
                 pivotGroup.traverse(n => {
                     if (n.isMesh) {
