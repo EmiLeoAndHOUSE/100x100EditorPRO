@@ -836,7 +836,8 @@
             final.traverse(n => { 
                 if(n.isMesh) { 
                     n.castShadow = true; 
-                    n.receiveShadow = true; 
+                    // Disabilitiamo receiveShadow sugli oggetti complessi per evitare il self-shadowing pesante
+                    n.receiveShadow = false; 
                     if (n.geometry && n.geometry.attributes.position) {
                         polyCount += n.geometry.attributes.position.count / 3;
                     }
