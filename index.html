@@ -348,6 +348,9 @@
                         </div>
                     </div>
                 </div>
+                <button class="btn" id="btn-characters" onclick="document.getElementById('char-file-in').click()">
+                    <i class="fas fa-users"></i> PERSONAGGI
+                </button>
                 <button class="btn" id="btn-paint" onclick="togglePaintMode()">
                     <i class="fas fa-paint-brush"></i> PENNELLO
                 </button>
@@ -432,6 +435,7 @@
     </div>
 
     <input type="file" id="file-in" accept=".glb,.gltf" style="display: none;">
+    <input type="file" id="char-file-in" accept=".glb,.gltf" style="display: none;" onchange="loadCharacter(event)">
     <input type="file" id="texture-folder-in" webkitdirectory directory multiple style="display: none;" onchange="loadTextureFolder(event)">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -585,7 +589,7 @@
         }
 
         // Asset DB
-        let rootFolder = { folders: { "Optimized": { folders: {}, assets: [] } }, assets: [] };
+        let rootFolder = { folders: { "Optimized": { folders: {}, assets: [] }, "Personaggi": { folders: {}, assets: [] } }, assets: [] };
         let currentFolder = rootFolder;
 
         function toggleMapMenu() {
@@ -1042,7 +1046,6 @@
             final.traverse(n => { 
                 if(n.isMesh) { 
                     n.castShadow = true; 
-                    // Disabilitiamo receiveShadow sugli oggetti complessi per evitare il self-shadowing pesante
                     n.receiveShadow = false; 
                     if (n.geometry && n.geometry.attributes.position) {
                         polyCount += n.geometry.attributes.position.count / 3;
@@ -1052,6 +1055,7 @@
             scene.add(final);
             objects.push(final);
             final.userData.name = currentPreview.userData.assetName + "_" + objects.length;
+            final.userData.isChar = currentPreview.userData.isChar;
             renderer.shadowMap.needsUpdate = true; // Update shadow map once
             stopPlacement();
             updateHierarchy();
@@ -1140,11 +1144,39 @@
             });
         };
 
-        function spawnGLB(name, sceneObj) {
+        function loadCharacter(e) {
+            const file = e.target.files[0];
+            if (!file || !loader) return;
+            const url = URL.createObjectURL(file);
+            document.getElementById('loading-status').innerText = "Caricamento Personaggio...";
+            document.getElementById('loading-screen').style.display = 'flex';
+            
+            loader.load(url, (gltf) => {
+                const name = file.name.split('.')[0];
+                const model = gltf.scene;
+                
+                model.traverse(n => {
+                    if (n.isMesh) {
+                        n.castShadow = true;
+                        n.receiveShadow = false;
+                    }
+                });
+
+                if (!rootFolder.folders["Personaggi"]) rootFolder.folders["Personaggi"] = { folders: {}, assets: [] };
+                rootFolder.folders["Personaggi"].assets.push({ name: name, scene: model, isChar: true });
+                renderShelf();
+                
+                spawnGLB(name, model, true);
+                document.getElementById('loading-screen').style.display = 'none';
+            });
+        }
+
+        function spawnGLB(name, sceneObj, isChar = false) {
             stopPlacement();
             isPlacing = true;
             currentPreview = sceneObj.clone();
             currentPreview.userData.assetName = name;
+            currentPreview.userData.isChar = isChar;
             scene.add(currentPreview);
             if (controls) controls.enabled = false;
             document.getElementById('placement-hint').style.display = 'block';
@@ -1164,7 +1196,7 @@
                 grid.appendChild(createAssetBox("📁", f, () => { currentFolder = currentFolder.folders[f]; renderShelf(); }));
             }
             currentFolder.assets.forEach(a => {
-                grid.appendChild(createAssetBox("🎨", a.name, () => spawnGLB(a.name, a.scene), (e) => showPreview(e, a)));
+                grid.appendChild(createAssetBox(a.isChar ? "👤" : "🎨", a.name, () => spawnGLB(a.name, a.scene, a.isChar), (e) => showPreview(e, a)));
             });
         }
 
@@ -1254,7 +1286,13 @@
             });
             
             const data = { 
-                objects: objects.map(o => ({ name: o.userData.name, p: [o.position.x, o.position.y, o.position.z], r: [o.rotation.x, o.rotation.y, o.rotation.z], s: [o.scale.x, o.scale.y, o.scale.z] })),
+                objects: objects.map(o => ({ 
+                    name: o.userData.name, 
+                    type: o.userData.isChar ? 'character' : 'object',
+                    p: [o.position.x, o.position.y, o.position.z], 
+                    r: [o.rotation.x, o.rotation.y, o.rotation.z], 
+                    s: [o.scale.x, o.scale.y, o.scale.z] 
+                })),
                 tiles: tilesData
             };
             const b = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
