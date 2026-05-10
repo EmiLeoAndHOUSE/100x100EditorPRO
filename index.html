@@ -1155,7 +1155,31 @@
                 const name = file.name.split('.')[0];
                 const model = gltf.scene;
                 
+                // 1. Calcola Bounding Box originale
+                const bbox = new THREE.Box3().setFromObject(model);
+                const size = new THREE.Vector3();
+                bbox.getSize(size);
+                
+                // 2. Normalizzazione Dimensioni (Target: altezza ~2 unità)
+                const maxDim = Math.max(size.x, size.y, size.z);
+                const scale = 2 / maxDim;
+                model.scale.set(scale, scale, scale);
+                
+                // 3. Reset Pivot: Sposta la geometria interna in modo che i piedi siano a Y=0
+                const offsetY = -bbox.min.y;
                 model.traverse(n => {
+                    if (n.isMesh) {
+                        // Spostiamo i vertici o la mesh stessa se è figlia diretta
+                        // Per semplicità, spostiamo le mesh figlie del gruppo radice
+                    }
+                });
+                // Metodo più pulito: avvolgi in un gruppo pivot
+                const pivotGroup = new THREE.Group();
+                model.position.y = offsetY * scale;
+                pivotGroup.add(model);
+                pivotGroup.userData.isChar = true;
+
+                pivotGroup.traverse(n => {
                     if (n.isMesh) {
                         n.castShadow = true;
                         n.receiveShadow = false;
@@ -1163,11 +1187,12 @@
                 });
 
                 if (!rootFolder.folders["Personaggi"]) rootFolder.folders["Personaggi"] = { folders: {}, assets: [] };
-                rootFolder.folders["Personaggi"].assets.push({ name: name, scene: model, isChar: true });
+                rootFolder.folders["Personaggi"].assets.push({ name: name, scene: pivotGroup, isChar: true });
                 renderShelf();
                 
-                spawnGLB(name, model, true);
-                document.getElementById('loading-screen').style.display = 'none';
+                spawnGLB(name, pivotGroup, true);
+                document.getElementById('loading-status').innerText = "Normalizzazione completata.";
+                setTimeout(() => document.getElementById('loading-screen').style.display = 'none', 500);
             });
         }
 
