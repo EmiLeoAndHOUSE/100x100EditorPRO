@@ -542,16 +542,13 @@
         }
 
         function animatePreview() {
-            // Temporaneamente disabilitato per debug FPS
-            /*
             requestAnimationFrame(animatePreview);
             if (document.getElementById('hover-preview').style.display === 'block' && pRenderer) {
                 if (pObj) pObj.rotation.y += 0.02;
                 pRenderer.render(pScene, pCamera);
             }
-            */
         }
-        // requestAnimationFrame(animatePreview);
+        requestAnimationFrame(animatePreview);
 
         // Asset DB
         let rootFolder = { folders: { "Optimized": { folders: {}, assets: [] } }, assets: [] };
@@ -716,10 +713,11 @@
                 camera.position.set(40, 40, 40);
                 camera.lookAt(0, 0, 0);
 
-                renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
-                renderer.setPixelRatio(1);
+                renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.2));
                 renderer.setSize(container.offsetWidth, container.offsetHeight);
-                renderer.shadowMap.enabled = false;
+                renderer.shadowMap.enabled = true;
+                renderer.shadowMap.type = THREE.PCFShadowMap;
                 container.appendChild(renderer.domElement);
 
                 controls = new THREE.OrbitControls(camera, renderer.domElement);
@@ -740,7 +738,7 @@
                 sun.shadow.bias = -0.0001;
                 scene.add(sun);
 
-                mainGrid = new THREE.GridHelper(200, 20, 0x00f2ff, 0x222222);
+                mainGrid = new THREE.GridHelper(200, 100, 0x00f2ff, 0x222222);
                 mainGrid.userData.lastSize = 200;
                 mainGrid.userData.lastColor = "#00f2ff";
                 scene.add(mainGrid);
