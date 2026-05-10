@@ -868,12 +868,14 @@
                 });
                 // Attach pointermove to container instead of global mousemove
                 const canvasContainer = document.getElementById('canvas-container');
-                canvasContainer.addEventListener('pointermove', onMove);
                 
-                canvasContainer.addEventListener('mousedown', (e) => {
-                    console.log("Mousedown on canvas container");
-                    onClick(e);
+                canvasContainer.addEventListener('pointerdown', (e) => {
+                    console.log("Pointerdown on canvas", e.button);
+                    // e.button 0 è click sinistro
+                    if (e.button === 0) onClick(e);
                 });
+                
+                canvasContainer.addEventListener('pointermove', onMove);
                 
                 canvasContainer.addEventListener('wheel', (e) => {
                     if (isPlacing) {
@@ -987,17 +989,16 @@
                     const cellSize = getCellSize();
                     brushCursor.position.x = Math.floor(pt.x / cellSize) * cellSize + cellSize / 2;
                     brushCursor.position.z = Math.floor(pt.z / cellSize) * cellSize + cellSize / 2;
-                    brushCursor.position.y = 0.01;
+                    brushCursor.position.y = 0.05; // Alzato per visibilità
                     brushCursor.visible = true;
-                    needsRender = true;
                 } else {
                     brushCursor.visible = false;
                 }
+                needsRender = true;
             }
 
             if (isPlacing && currentPreview) {
                 if (pt) {
-                    currentPreview.position.copy(pt);
                     if (currentPreview.userData.isChar) {
                         const cellSize = getCellSize();
                         currentPreview.position.x = Math.floor(pt.x / cellSize) * cellSize + cellSize / 2;
@@ -1007,19 +1008,20 @@
                         currentPreview.position.z = Math.round(pt.z * 2) / 2;
                     }
                     currentPreview.position.y = 0;
-                    needsRender = true;
                 }
+                needsRender = true;
             }
         }
 
         function onClick(e) {
-            console.log("Canvas onClick triggered, isPlacing:", isPlacing);
+            if (isPlaying) return;
             if (isPainting) {
                 paintTile(e.shiftKey);
                 return;
             }
-            if (!isPlacing) return;
-            fixObject();
+            if (isPlacing && currentPreview) {
+                fixObject();
+            }
         }
 
         function onWheel(e) {
