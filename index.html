@@ -341,6 +341,11 @@
                                 <option value="">Nessuna Texture</option>
                             </select>
                         </div>
+                        <div style="margin-bottom: 12px;">
+                            <label style="display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-dim); cursor: pointer;">
+                                <input type="checkbox" id="paint-random-rot"> ROTAZIONE CASUALE TILE
+                            </label>
+                        </div>
                     </div>
                 </div>
                 <button class="btn" id="btn-paint" onclick="togglePaintMode()">
@@ -708,6 +713,7 @@
                     foundAny = true;
                     const url = URL.createObjectURL(file);
                     texLoader.load(url, (tex) => {
+                        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
                         textureLibrary[file.name] = tex;
                         
                         // Aggiorna Dropdown se non esiste già
@@ -993,10 +999,33 @@
                 
                 const cellSize = getCellSize();
                 const geometry = new THREE.PlaneGeometry(cellSize, cellSize);
+                
+                // Regola UV per Tiling continuo basato sulla posizione mondiale
+                const uvAttr = geometry.attributes.uv;
+                const uvScale = 0.1; // Rapporto di scala (10 unità = 1 ripetizione)
+                for (let i = 0; i < uvAttr.count; i++) {
+                    let u = uvAttr.getX(i);
+                    let v = uvAttr.getY(i);
+                    
+                    // Trasforma UV locali [0,1] in UV mondiali basati sulla posizione della mesh
+                    // x e z sono i centri della cella
+                    const worldX = x + (u - 0.5) * cellSize;
+                    const worldZ = z + (v - 0.5) * cellSize;
+                    
+                    uvAttr.setXY(i, worldX * uvScale, worldZ * uvScale);
+                }
+                
                 const material = new THREE.MeshPhongMaterial({ map: textureLibrary[texName], side: THREE.DoubleSide });
                 const tile = new THREE.Mesh(geometry, material);
                 
                 tile.rotation.x = -Math.PI / 2;
+                
+                // Rotazione Casuale se attiva
+                if (document.getElementById('paint-random-rot').checked) {
+                    const rots = [0, Math.PI/2, Math.PI, Math.PI * 1.5];
+                    tile.rotation.z = rots[Math.floor(Math.random() * rots.length)];
+                }
+
                 tile.position.set(x, 0.005, z); // Leggermente sopra il piano base
                 tile.receiveShadow = true;
                 
