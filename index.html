@@ -439,6 +439,8 @@
         let lastCompName = "modello_compresso";
         let textureLibrary = {};
         let basePlane = null;
+        let polyCount = 0;
+        let containerRect = null;
 
         // Play Mode
         let isPlaying = false;
@@ -478,16 +480,7 @@
                 frameCount = 0;
                 lastTime = now;
                 document.getElementById('perf-fps').innerText = fps;
-
-                // Calcolo Poligoni
-                let totalPolys = 0;
-                scene.traverse(node => {
-                    if (node.isMesh && node.geometry && node.geometry.attributes.position) {
-                        totalPolys += node.geometry.attributes.position.count / 3;
-                    }
-                });
-                
-                document.getElementById('perf-poly').innerText = Math.floor(totalPolys).toLocaleString();
+                document.getElementById('perf-poly').innerText = Math.floor(polyCount).toLocaleString();
             }
         }
 
@@ -645,17 +638,20 @@
             const useTexture = document.getElementById('map-texture-toggle').checked;
             const textureName = document.getElementById('map-texture-select').value;
 
+            // Pulizia vecchia texture per evitare memory leak
+            if (basePlane.material.map && basePlane.material.map !== textureLibrary[textureName]) {
+                // basePlane.material.map.dispose(); // Non vogliamo distruggere la texture se è nella library
+            }
+
             if (useTexture && textureName && textureLibrary[textureName]) {
                 const tex = textureLibrary[textureName];
                 tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
                 const size = parseFloat(document.getElementById('map-size').value);
-                tex.repeat.set(size / 10, size / 10); // Ripetizione proporzionale
+                tex.repeat.set(size / 10, size / 10);
                 basePlane.material.map = tex;
-                basePlane.material.color.set(0xffffff); // Forza bianco per non colorare la texture
+                basePlane.material.color.set(0xffffff);
             } else {
                 basePlane.material.map = null;
-                const bgColor = document.getElementById('map-bg').value;
-                // Usiamo un grigio scuro o il colore scelto per il terreno solido
                 basePlane.material.color.set(0x050505); 
             }
             basePlane.material.needsUpdate = true;
@@ -718,7 +714,7 @@
                 camera.lookAt(0, 0, 0);
 
                 renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-                renderer.setPixelRatio(window.devicePixelRatio > 2 ? 2 : window.devicePixelRatio);
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
                 renderer.setSize(container.offsetWidth, container.offsetHeight);
                 renderer.shadowMap.enabled = true;
                 container.appendChild(renderer.domElement);
@@ -730,9 +726,15 @@
                 ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
                 scene.add(ambientLight);
                 const sun = new THREE.DirectionalLight(0xffffff, 1.0);
-                sun.position.set(30, 60, 30);
+                sun.position.set(50, 100, 50);
                 sun.castShadow = true;
                 sun.shadow.mapSize.set(1024, 1024);
+                sun.shadow.camera.left = -200;
+                sun.shadow.camera.right = 200;
+                sun.shadow.camera.top = 200;
+                sun.shadow.camera.bottom = -200;
+                sun.shadow.camera.far = 500;
+                sun.shadow.bias = -0.0001;
                 scene.add(sun);
 
                 mainGrid = new THREE.GridHelper(200, 100, 0x00f2ff, 0x222222);
@@ -753,6 +755,8 @@
                 window.addEventListener('keyup', onKeyUp);
                 container.addEventListener('wheel', onWheel, { passive: false });
 
+                onResize(); // Initial rect calculation
+
                 document.getElementById('loading-screen').style.display = 'none';
                 renderShelf();
                 animate();
@@ -763,9 +767,10 @@
 
         function onResize() {
             const container = document.getElementById('canvas-container');
-            camera.aspect = container.offsetWidth / container.offsetHeight;
+            containerRect = container.getBoundingClientRect();
+            camera.aspect = containerRect.width / containerRect.height;
             camera.updateProjectionMatrix();
-            renderer.setSize(container.offsetWidth, container.offsetHeight);
+            renderer.setSize(containerRect.width, containerRect.height);
         }
 
         let keys = {};
@@ -800,10 +805,9 @@
         }
 
         function onMove(e) {
-            const container = document.getElementById('canvas-container');
-            const rect = container.getBoundingClientRect();
-            mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-            mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+            if (!containerRect) return;
+            mouse.x = ((e.clientX - containerRect.left) / containerRect.width) * 2 - 1;
+            mouse.y = -((e.clientY - containerRect.top) / containerRect.height) * 2 + 1;
             raycaster.setFromCamera(mouse, camera);
             if (isPlacing && currentPreview) {
                 const pt = new THREE.Vector3();
@@ -827,7 +831,15 @@
         function fixObject() {
             if (!isPlacing || !currentPreview) return;
             const final = currentPreview.clone();
-            final.traverse(n => { if(n.isMesh) { n.castShadow = true; n.receiveShadow = true; }});
+            final.traverse(n => { 
+                if(n.isMesh) { 
+                    n.castShadow = true; 
+                    n.receiveShadow = true; 
+                    if (n.geometry && n.geometry.attributes.position) {
+                        polyCount += n.geometry.attributes.position.count / 3;
+                    }
+                }
+            });
             scene.add(final);
             objects.push(final);
             final.userData.name = currentPreview.userData.assetName + "_" + objects.length;
@@ -967,6 +979,11 @@
 
         function delSel() {
             if (!selected) return;
+            selected.traverse(n => {
+                if (n.isMesh && n.geometry && n.geometry.attributes.position) {
+                    polyCount -= n.geometry.attributes.position.count / 3;
+                }
+            });
             scene.remove(selected);
             objects = objects.filter(o => o !== selected);
             select(null);
